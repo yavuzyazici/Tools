@@ -18,7 +18,7 @@ class ListDiff
             "Downloads"
         );
 
-        string registrar = "Marcaria";
+        string registrar = "AtakDomain";
 
         string pathA = Path.Combine(downloadsPath, "registrar.txt");
         string pathB = Path.Combine(downloadsPath, "dna.txt");
