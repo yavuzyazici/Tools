@@ -18,10 +18,10 @@ class ListDiff
             "Downloads"
         );
 
-        string registrar = "AtakDomain";
+        string registrar = "datanew";
 
-        string pathA = Path.Combine(downloadsPath, "registrar.txt");
-        string pathB = Path.Combine(downloadsPath, "dna.txt");
+        string pathA = Path.Combine(downloadsPath, "datanew.txt");
+        string pathB = Path.Combine(downloadsPath, "dataold.txt");
 
         if (!File.Exists(pathA)) { Console.WriteLine($"HATA: Dosya bulunamadı → {pathA}"); Console.ReadKey(); return; }
         if (!File.Exists(pathB)) { Console.WriteLine($"HATA: Dosya bulunamadı → {pathB}"); Console.ReadKey(); return; }
@@ -60,7 +60,7 @@ class ListDiff
             .ToList();
 
         Console.WriteLine($"Sadece {registrar}'da: {onlyInA.Count} öğe");
-        Console.WriteLine($"Sadece DNA'da: {onlyInB.Count} öğe");
+        Console.WriteLine($"Sadece dataold'da: {onlyInB.Count} öğe");
 
         // ============================================================
         // EXCEL'E KAYDET
@@ -87,8 +87,8 @@ class ListDiff
         wsA.Column(1).Width = 45;
 
         // --- Sayfa 2: Sadece B'de ---
-        var wsB = wb.AddWorksheet("Sadece DNA'da");
-        wsB.Cell(1, 1).Value = "Sadece DNA Listesinde Olanlar";
+        var wsB = wb.AddWorksheet("Sadece dataold'da");
+        wsB.Cell(1, 1).Value = "Sadece dataold Listesinde Olanlar";
         wsB.Cell(1, 1).Style.Font.Bold = true;
         wsB.Cell(1, 1).Style.Fill.BackgroundColor = XLColor.FromHtml("#51CF66");
         wsB.Cell(1, 1).Style.Font.FontColor = XLColor.White;
@@ -108,14 +108,14 @@ class ListDiff
         wsSummary.Cell(2, 1).Value = $"{registrar} Listesi Toplam";
         wsSummary.Cell(2, 2).Value = listA.Count;
 
-        wsSummary.Cell(3, 1).Value = "DNA Listesi Toplam";
+        wsSummary.Cell(3, 1).Value = "dataold Listesi Toplam";
         wsSummary.Cell(3, 2).Value = listB.Count;
 
         wsSummary.Cell(4, 1).Value = $"Sadece {registrar}'da";
         wsSummary.Cell(4, 2).Value = onlyInA.Count;
         wsSummary.Cell(4, 1).Style.Font.FontColor = XLColor.FromHtml("#C92A2A");
 
-        wsSummary.Cell(5, 1).Value = "Sadece DNA'da";
+        wsSummary.Cell(5, 1).Value = "Sadece dataold'da";
         wsSummary.Cell(5, 2).Value = onlyInB.Count;
         wsSummary.Cell(5, 1).Style.Font.FontColor = XLColor.FromHtml("#2F9E44");
 
