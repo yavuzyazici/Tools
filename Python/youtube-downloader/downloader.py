@@ -8,11 +8,11 @@ import sys
 from yt_dlp import YoutubeDL
 
 # === SABİTLER ===
-URL = "https://www.youtube.com/watch?v=rhpZNno8dbM"   # <- kendi linkinizi girin
+URL = "https://www.youtube.com/watch?v=SQGjzypfPmM"   # <- kendi linkinizi girin
 OUTPUT_DIR = "mp3"                                  # çıkış klasörü
 BITRATE = "320"                                     # 128/160/192/256/320
 DOWNLOAD_PLAYLIST = False                            # playlist ise tamamını indir
-FFMPEG_PATH = r"E:\ffmpeg\bin"                      # PATH'e ekliyseniz "" bırakın
+FFMPEG_PATH = str(Path(__file__).resolve().parent / "ffmpeg" / "bin")
 
 def main():
     if not URL or URL.startswith("https://www.youtube.com/watch?v=XXXX"):
