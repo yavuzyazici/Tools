@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# PyInstaller build çıktıları
+build/
+dist/
+*.manifest
+
+# Uygulama çıktıları / hassas veriler — GitHub'a YÜKLENMEMELİ
+gonderim_sonuclari.csv
+kontrol_sorunlari.csv
+*.xlsx
+*.xlsm
+*.pdf
+ayarlar.json
+.toplu_fatura_mailer.json
+
+# İşletim sistemi / editör
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

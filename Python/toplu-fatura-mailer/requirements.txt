@@ -1,0 +1,4 @@
+# Toplu Fatura Mail Gönderici bağımlılıkları
+openpyxl>=3.1        # Excel (.xlsx) okuma
+pywin32>=306 ; platform_system == "Windows"   # Outlook (masaüstü) gönderimi için — yalnızca Windows
+# Not: SMTP ve arayüz (tkinter) Python ile birlikte gelir, ek kurulum gerektirmez.
