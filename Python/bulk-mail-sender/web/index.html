@@ -1,0 +1,186 @@
+<!doctype html>
+<html lang="tr">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#007AFF" />
+  <title>Toplu Fatura Mail Gönderici</title>
+  <link rel="stylesheet" href="theme.css" />
+</head>
+<body>
+  <!-- Üst bar -->
+  <div class="topbar">
+    <div class="brand">
+      <div>
+        <div class="brand-title">Toplu Fatura Mail Gönderici</div>
+        <div class="brand-sub">Excel listesinden otomatik fatura gönderimi</div>
+      </div>
+    </div>
+    <div id="status" class="status-badge"><span class="dot"></span> Hazır</div>
+  </div>
+
+  <div class="wrap">
+
+    <!-- 1) Excel dosyası -->
+    <div class="card">
+      <div class="card-label"><span class="num">1</span> Excel dosyası</div>
+      <div class="row">
+        <input type="text" id="xlsx" placeholder="Excel dosyası seçilmedi" readonly style="flex:1" />
+        <button class="btn btn-ghost btn-sm" id="btn-browse">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+          Gözat
+        </button>
+        <button class="btn btn-ghost btn-sm" id="btn-read">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+          Sütunları Oku
+        </button>
+      </div>
+    </div>
+
+    <!-- 2) Sütun eşleme -->
+    <div class="card">
+      <div class="card-label"><span class="num">2</span> Sütun eşleme</div>
+      <div class="row">
+        <div class="field" style="max-width:200px">
+          <span class="field-label">Sayfa (sheet)</span>
+          <select id="sheet"></select>
+        </div>
+        <div class="field">
+          <span class="field-label">E-posta sütunu</span>
+          <select id="email-col"></select>
+        </div>
+        <div class="field">
+          <span class="field-label">Ek (dosya yolu) sütunu</span>
+          <select id="attach-col"></select>
+        </div>
+      </div>
+    </div>
+
+    <!-- 3) Gönderim yöntemi -->
+    <div class="card">
+      <div class="card-label"><span class="num">3</span> Gönderim yöntemi</div>
+      <div class="row" style="justify-content:space-between">
+        <div class="seg" id="method-seg">
+          <button data-method="outlook" class="on">Outlook (masaüstü)</button>
+          <button data-method="smtp">SMTP sunucusu</button>
+        </div>
+        <div class="field" style="max-width:300px">
+          <span class="field-label">Gönderen adres</span>
+          <input type="text" id="sender" placeholder="ornek@sirket.com" />
+        </div>
+      </div>
+
+      <div class="smtp-panel hidden" id="smtp-panel">
+        <div class="row">
+          <div class="field"><span class="field-label">Sunucu</span><input type="text" id="smtp-host" placeholder="smtp.sirket.com" /></div>
+          <div class="field" style="max-width:110px"><span class="field-label">Port</span><input type="number" id="smtp-port" value="587" /></div>
+          <div class="field" style="max-width:150px"><span class="field-label">Güvenlik</span>
+            <select id="smtp-security"><option value="starttls">starttls</option><option value="ssl">ssl</option><option value="none">none</option></select>
+          </div>
+        </div>
+        <div class="row" style="margin-top:12px">
+          <div class="field"><span class="field-label">Kullanıcı</span><input type="text" id="smtp-user" placeholder="kullanıcı adı" /></div>
+          <div class="field"><span class="field-label">Şifre <span class="hint">(kaydedilir)</span></span><input type="password" id="smtp-pass" placeholder="••••••••" /></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- 4) Mail içeriği -->
+    <div class="card">
+      <div class="card-label" style="justify-content:space-between">
+        <span style="display:flex;align-items:center;gap:9px"><span class="num">4</span> Mail içeriği</span>
+        <label class="check">
+          <input type="checkbox" id="is-html" />
+          <span class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg></span>
+          İçerik HTML
+        </label>
+      </div>
+      <div class="field" style="margin-bottom:12px">
+        <span class="field-label">Konu</span>
+        <input type="text" id="subject" placeholder="Örn. Şubat 2026 dönemi faturanız" />
+      </div>
+      <div class="field">
+        <span class="field-label">İçerik</span>
+        <textarea id="body" placeholder="Mail gövdesi..."></textarea>
+      </div>
+      <div class="row" style="margin-top:12px">
+        <button class="btn btn-ghost btn-sm" id="btn-load-html">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
+          HTML dosyasından yükle
+        </button>
+        <button class="btn btn-ghost btn-sm" id="btn-preview">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
+          Tarayıcıda önizle
+        </button>
+      </div>
+    </div>
+
+    <!-- 5) Çalışma ayarları -->
+    <div class="card">
+      <div class="card-label"><span class="num">5</span> Çalışma ayarları</div>
+      <div class="row">
+        <div class="field" style="max-width:160px">
+          <span class="field-label">Mailler arası bekleme (sn)</span>
+          <input type="number" id="delay" value="1.0" step="0.1" min="0" />
+        </div>
+        <div class="field" style="max-width:160px">
+          <span class="field-label">Adet sınırı <span class="hint">(0 = hepsi)</span></span>
+          <input type="number" id="limit" value="0" min="0" />
+        </div>
+        <div class="field">
+          <span class="field-label">TEST adresi <span class="hint">(doluysa herkes yerine buraya)</span></span>
+          <input type="text" id="test" placeholder="boş = gerçek gönderim" />
+        </div>
+      </div>
+    </div>
+
+    <!-- Aksiyonlar -->
+    <div class="actions">
+      <button class="btn btn-secondary" id="btn-check">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+        Kontrol Et
+      </button>
+      <button class="btn btn-primary" id="btn-start">
+        <svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+        Gönderimi Başlat
+      </button>
+      <button class="btn btn-outline" id="btn-stop" disabled>
+        <svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+        Durdur
+      </button>
+    </div>
+    <div class="progress-row">
+      <div class="track"><div class="fill" id="fill"></div></div>
+      <span class="count" id="count">0 / 0</span>
+    </div>
+
+    <!-- Log -->
+    <div class="card">
+      <div class="log-head">
+        <div class="card-label" style="margin-bottom:0"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--gray-500)" stroke-width="2" style="margin-right:2px"><path d="M4 6h16M4 12h16M4 18h16"/></svg> Kayıt / Log</div>
+        <button class="btn btn-outline btn-sm" id="btn-clear-log">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2m2 0v14a2 2 0 01-2 2H7a2 2 0 01-2-2V6"/></svg>
+          Temizle
+        </button>
+      </div>
+      <div class="log" id="log"></div>
+    </div>
+
+  </div>
+
+  <!-- Bildirim ve onay katmanları -->
+  <div class="toast-wrap" id="toast-wrap"></div>
+  <div class="modal-backdrop hidden" id="modal">
+    <div class="modal">
+      <h3 id="modal-title">Onay</h3>
+      <div class="modal-body" id="modal-body"></div>
+      <div class="modal-actions">
+        <button class="btn btn-secondary btn-sm" id="modal-cancel">Vazgeç</button>
+        <button class="btn btn-primary btn-sm" id="modal-ok">Başlat</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

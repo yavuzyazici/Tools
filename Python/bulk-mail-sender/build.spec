@@ -8,25 +8,40 @@ Kullanım:
 
 Çıktı: dist/TopluFaturaMailer.exe  (tek dosya, konsolsuz)
 
+Arayüz (web/ klasörü: HTML/CSS/JS + Inter fontu) exe'nin içine gömülür.
 Not: Ayar dosyası (ayarlar.json) exe'nin yanında DEĞİL,
-%APPDATA%\TopluFaturaMailer\ klasöründe tutulur; exe'nin içine de gömülmez.
-Bu yüzden burada 'datas' ile paketlenmez.
+%APPDATA%/TopluFaturaMailer/ klasöründe tutulur; exe'nin içine gömülmez.
 """
+
+from PyInstaller.utils.hooks import collect_all
+
+# pywebview + pythonnet(clr) için tüm alt modül/veri/binary'leri topla
+_datas, _binaries, _hidden = collect_all('webview')
+for _pkg in ('clr_loader', 'pythonnet'):
+    try:
+        _d, _b, _h = collect_all(_pkg)
+        _datas += _d; _binaries += _b; _hidden += _h
+    except Exception:
+        pass
 
 block_cipher = None
 
 
 a = Analysis(
-    ['app.py'],
+    ['ui.py'],
     pathex=[],
-    binaries=[],
-    datas=[],
+    binaries=_binaries,
+    datas=[('web', 'web')] + _datas,   # web/ klasörünü exe içine göm
     hiddenimports=[
         # Outlook (pywin32) gönderimi için — dinamik import olduğundan elle belirtilir
         'win32com',
         'win32com.client',
         'win32timezone',
-    ],
+        # pywebview Windows arka ucu (Edge WebView2 / clr)
+        'webview.platforms.winforms',
+        'webview.platforms.edgechromium',
+        'clr',
+    ] + _hidden,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
@@ -50,7 +65,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,              # UPX kapalı: başlatma hızı + antivirüs uyumu (pywebview/clr için önerilir)
     upx_exclude=[],
     runtime_tmpdir=None,
     console=False,          # GUI uygulaması: konsol penceresi açılmasın

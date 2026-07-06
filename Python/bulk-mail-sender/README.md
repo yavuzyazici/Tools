@@ -18,8 +18,9 @@ yapabilirsiniz.
 - 🔢 **Adet sınırı & başlangıç satırı** — önce 3 mail deneyin, sonra tümünü gönderin.
 - ⏱️ **Hız sınırı** — mailler arasında bekleme süresi (sunucu limitlerine takılmamak için).
 - 🧾 **Gönderim kaydı** — her gönderim `gonderim_sonuclari.csv`'ye (zaman, satır, e-posta, durum) yazılır.
-- 📊 **Canlı log ve ilerleme çubuğu.**
+- 📊 **Canlı log ve ilerleme çubuğu** — log alanı için **Temizle** düğmesi.
 - 💾 **Ayarları hatırlar** — tüm alanlar (SMTP şifresi dahil) `%APPDATA%` altında saklanır.
+- 🎨 **yavuzyazici.com teması** — arayüz siteyle aynı tasarım dili (Inter fontu, mavi vurgu) ile `web/` klasöründeki HTML/CSS'ten çizilir.
 
 ## Kurulum
 
@@ -30,14 +31,30 @@ pip install -r requirements.txt
 ```
 
 - `openpyxl` — Excel okumak için.
+- `pywebview` — masaüstü arayüz penceresi için (Windows'ta gömülü Edge WebView2'yi kullanır).
 - `pywin32` — **yalnızca** Outlook yöntemi için (Windows). SMTP kullanacaksanız gerekmez.
-- Arayüz `tkinter` ile yazılmıştır; Python ile birlikte gelir.
 
 ## Çalıştırma
+
+Ana (yeni) arayüz — yavuzyazici.com temalı:
+
+```bash
+python ui.py
+```
+
+Eski Tkinter arayüzü hâlâ yedek olarak durur (ek bağımlılık istemez):
 
 ```bash
 python app.py
 ```
+
+## Derleme (.exe)
+
+```bash
+build.bat
+```
+
+`web/` klasörü (HTML/CSS + Inter fontu) exe'nin içine gömülür; çıktı `dist/TopluFaturaMailer.exe` tek dosyadır ve internet gerektirmez.
 
 ## Kullanım adımları
 

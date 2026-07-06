@@ -1,4 +1,6 @@
 # Toplu Fatura Mail Gönderici bağımlılıkları
 openpyxl>=3.1        # Excel (.xlsx) okuma
+pywebview>=5.0       # Masaüstü arayüz (Windows'ta gömülü Edge WebView2 kullanır)
 pywin32>=306 ; platform_system == "Windows"   # Outlook (masaüstü) gönderimi için — yalnızca Windows
-# Not: SMTP ve arayüz (tkinter) Python ile birlikte gelir, ek kurulum gerektirmez.
+# Not: SMTP Python ile birlikte gelir. Arayüz web/ klasöründeki HTML/CSS ile çizilir.
+# Eski Tkinter arayüzü app.py içinde yedek olarak durur (ek bağımlılık gerektirmez).
