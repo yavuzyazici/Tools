@@ -176,9 +176,6 @@ class App(tk.Tk):
         ttk.Label(f_run, text="TEST adresi (doluysa herkese yerine buraya):").grid(row=1, column=0, columnspan=2, sticky="e", **pad)
         self.var_test = tk.StringVar()
         ttk.Entry(f_run, textvariable=self.var_test, width=30).grid(row=1, column=2, columnspan=2, sticky="w", **pad)
-        self.var_skip = tk.BooleanVar(value=True)
-        ttk.Checkbutton(f_run, text="Daha önce gönderilenleri atla (devam et)", variable=self.var_skip).grid(
-            row=1, column=4, columnspan=2, sticky="w", **pad)
 
         # --- Aksiyon butonları ---
         f_act = ttk.Frame(root)
@@ -332,11 +329,10 @@ class App(tk.Tk):
             smtp_user=self.var_user.get().strip(),
             smtp_password=self.var_pass.get(),
             delay=_f(self.var_delay.get(), 1.0),
-            start_row=2,  # her zaman ilk veri satırından başla; devam için "gönderilenleri atla" kullanılır
+            start_row=2,  # her zaman ilk veri satırından başla
             limit=_i(self.var_limit.get(), 0),
             test_to=self.var_test.get().strip(),
             results_path=results_path,
-            skip_sent=self.var_skip.get(),
         )
 
     def _check(self):
@@ -483,7 +479,7 @@ class App(tk.Tk):
         self.btn_start.configure(state="normal")
         self.btn_stop.configure(state="disabled")
         msg = (f"Tamamlandı.\n\nGönderilen: {result['sent']}\n"
-               f"Hatalı: {result['failed']}\nAtlanan: {result['skipped']}")
+               f"Hatalı: {result['failed']}")
         if result.get("stopped"):
             msg = "Durduruldu.\n\n" + msg
         self._log("info", "=== " + msg.replace("\n", " ") + " ===")
@@ -517,7 +513,6 @@ class App(tk.Tk):
             "delay": self.var_delay.get(),
             "limit": self.var_limit.get(),
             "test_to": self.var_test.get(),
-            "skip_sent": self.var_skip.get(),
         }
         try:
             with open(SETTINGS_FILE, "w", encoding="utf-8") as fh:
@@ -553,7 +548,6 @@ class App(tk.Tk):
         self.var_delay.set(data.get("delay", "1.0"))
         self.var_limit.set(data.get("limit", "0"))
         self.var_test.set(data.get("test_to", ""))
-        self.var_skip.set(data.get("skip_sent", True))
         self._toggle_smtp()
 
     def _on_close(self):

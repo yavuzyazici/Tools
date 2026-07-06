@@ -17,9 +17,9 @@ yapabilirsiniz.
 - 🧪 **Test modu** — tüm mailleri tek bir deneme adresine yönlendirip önce kendinize gönderin.
 - 🔢 **Adet sınırı & başlangıç satırı** — önce 3 mail deneyin, sonra tümünü gönderin.
 - ⏱️ **Hız sınırı** — mailler arasında bekleme süresi (sunucu limitlerine takılmamak için).
-- ♻️ **Kaldığın yerden devam** — `gonderim_sonuclari.csv`'ye yazar; başarılı satırları atlar.
+- 🧾 **Gönderim kaydı** — her gönderim `gonderim_sonuclari.csv`'ye (zaman, satır, e-posta, durum) yazılır.
 - 📊 **Canlı log ve ilerleme çubuğu.**
-- 🔒 **Şifre diske yazılmaz** (yalnızca oturum boyunca bellekte tutulur).
+- 💾 **Ayarları hatırlar** — tüm alanlar (SMTP şifresi dahil) `%APPDATA%` altında saklanır.
 
 ## Kurulum
 
@@ -68,11 +68,11 @@ python app.py
 
 Ek sütunundaki yol, o satırda gönderilecek dosyanın **tam yoludur**.
 
-## Devam etme / yeniden çalıştırma
+## Gönderim kaydı
 
-Uygulama, Excel'in bulunduğu klasöre `gonderim_sonuclari.csv` yazar. Program yarıda
-kesilirse tekrar başlattığınızda "Daha önce gönderilenleri atla" işaretliyse başarılı
-satırlar tekrar gönderilmez. Baştan göndermek isterseniz bu dosyayı silin.
+Uygulama, her gönderimi Excel'in bulunduğu klasördeki `gonderim_sonuclari.csv` dosyasına
+kaydeder (zaman, satır, e-posta, durum, detay). Bu dosya yalnızca **kayıt/rapor** amaçlıdır;
+program her çalıştırmada listedeki **tüm** satırları gönderir.
 
 ## Güvenlik notları
 

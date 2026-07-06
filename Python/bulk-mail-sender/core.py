@@ -47,8 +47,7 @@ class SendJob:
     start_row: int = 2      # bu satırdan itibaren (1 tabanlı; 2 = ilk veri satırı)
     limit: int = 0          # 0 = hepsi; test için ör. 3
     test_to: str = ""       # doluysa TÜM mailler bu adrese gider (güvenli test)
-    results_path: str = ""  # sonuç csv yolu (devam/resume için)
-    skip_sent: bool = True  # results_path'te 'OK' olan satırları atla
+    results_path: str = ""  # gönderim kaydı (log) csv yolu
 
 
 def read_recipients(xlsx_path, sheet, email_col, attach_col):
@@ -85,23 +84,6 @@ def get_headers(xlsx_path, sheet=None):
         break
     wb.close()
     return sheet_names, headers
-
-
-def _load_done_rows(results_path):
-    """Daha önce başarıyla gönderilmiş satır numaralarını yükler (resume)."""
-    done = set()
-    if results_path and os.path.isfile(results_path):
-        try:
-            with open(results_path, "r", encoding="utf-8-sig", newline="") as fh:
-                for r in csv.DictReader(fh):
-                    if (r.get("status") or "").upper() == "OK":
-                        try:
-                            done.add(int(r["row"]))
-                        except (ValueError, KeyError, TypeError):
-                            pass
-        except Exception:  # noqa: BLE001
-            pass
-    return done
 
 
 def _append_result(results_path, row, email, status, detail):
@@ -188,7 +170,7 @@ def run_job(job: SendJob, on_progress=None, on_log=None, should_stop=None):
     on_log(level, message)             : log satırı ('info'|'ok'|'error')
     should_stop() -> bool              : True dönerse döngü durur
 
-    Sonuç sözlüğü döndürür: {total, sent, failed, skipped, stopped}
+    Sonuç sözlüğü döndürür: {total, sent, failed, stopped}
     """
     def log(level, msg):
         if on_log:
@@ -202,8 +184,6 @@ def run_job(job: SendJob, on_progress=None, on_log=None, should_stop=None):
 
     # start_row filtresi
     recipients = [r for r in recipients if r.row >= job.start_row]
-
-    done_rows = _load_done_rows(job.results_path) if job.skip_sent else set()
 
     if job.limit and job.limit > 0:
         recipients = recipients[: job.limit]
@@ -227,9 +207,9 @@ def run_job(job: SendJob, on_progress=None, on_log=None, should_stop=None):
         log("info", f"Bağlantı hazır ({job.method}).")
     except MailerError as exc:
         log("error", f"Bağlantı hatası: {exc}")
-        return {"total": total, "sent": 0, "failed": 0, "skipped": 0, "stopped": True}
+        return {"total": total, "sent": 0, "failed": 0, "stopped": True}
 
-    ok = fail = skipped = 0
+    ok = fail = 0
     stopped = False
 
     for i, rcp in enumerate(recipients, start=1):
@@ -237,11 +217,6 @@ def run_job(job: SendJob, on_progress=None, on_log=None, should_stop=None):
             log("info", "Kullanıcı tarafından durduruldu.")
             stopped = True
             break
-
-        if rcp.row in done_rows:
-            skipped += 1
-            progress(i, total, ok, fail)
-            continue
 
         to_addr = job.test_to or rcp.email
 
@@ -288,5 +263,5 @@ def run_job(job: SendJob, on_progress=None, on_log=None, should_stop=None):
                 waited += step
 
     mailer.close()
-    log("info", f"Bitti. Gönderilen: {ok}, Hatalı: {fail}, Atlanan: {skipped}")
-    return {"total": total, "sent": ok, "failed": fail, "skipped": skipped, "stopped": stopped}
+    log("info", f"Bitti. Gönderilen: {ok}, Hatalı: {fail}")
+    return {"total": total, "sent": ok, "failed": fail, "stopped": stopped}
