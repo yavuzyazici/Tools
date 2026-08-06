@@ -60,13 +60,16 @@ body {
 
 h1,h2,h3 { font-weight:700; line-height:1.2; letter-spacing:-0.02em; }
 
-/* ---- Üst bar ---- */
+/* ---- Üst bar ----
+   Not: Burada eskiden 'backdrop-filter: blur(20px)' vardı. Yapışkan (sticky) bir
+   çubukta bulanıklaştırma, sayfadaki HER boyama işleminde pencere genişliğinde
+   yeniden hesaplanır ve WebView2'de gözle görülür takılmaya yol açar. Görsel
+   sonucu neredeyse aynı olan düz (opak) arka planla değiştirildi. */
 .topbar {
   position: sticky; top: 0; z-index: 50;
   display: flex; align-items: center; justify-content: space-between;
   padding: 12px 22px;
-  background: rgba(255,255,255,0.92);
-  backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+  background: #fdfdfe;
   border-bottom: 1px solid var(--gray-200);
 }
 .brand { display: flex; align-items: center; gap: 12px; }
@@ -116,12 +119,16 @@ select { cursor: pointer; -webkit-appearance: none; appearance: none;
   background-repeat: no-repeat; background-position: right 13px center; padding-right: 32px; }
 
 /* ---- Butonlar (hap) ---- */
+/* transition: all -> her özellik için geçiş demektir; tarayıcı hangi özelliğin
+   değiştiğini bilemediği için gereksiz yeniden hesap yapar. Hedefli geçiş daha ucuz. */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
   padding: 11px 22px; border-radius: var(--radius-full);
   font-size: 14px; font-weight: 600; font-family: var(--font);
   cursor: pointer; border: none; outline: none; white-space: nowrap;
-  transition: all var(--transition);
+  transition: background-color var(--transition), color var(--transition),
+              border-color var(--transition), box-shadow var(--transition),
+              transform var(--transition), opacity var(--transition);
 }
 .btn svg { width: 16px; height: 16px; }
 .btn-primary { background: var(--blue); color: #fff; }
@@ -140,31 +147,42 @@ select { cursor: pointer; -webkit-appearance: none; appearance: none;
 .seg button {
   border: none; background: none; cursor: pointer; font-family: var(--font);
   padding: 8px 18px; border-radius: var(--radius-full); font-size: 13px; font-weight: 600; color: var(--gray-500);
-  transition: all var(--transition);
+  transition: background-color var(--transition), color var(--transition), box-shadow var(--transition);
 }
 .seg button.on { background: var(--white); color: var(--blue); box-shadow: var(--shadow-sm); }
 
 /* ---- Onay kutusu (İçerik HTML) ---- */
 .check { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; font-weight: 500; color: var(--gray-600); user-select: none; }
 .check input { position: absolute; opacity: 0; width: 0; height: 0; }
-.check .box { width: 20px; height: 20px; border-radius: 6px; border: 1.5px solid var(--gray-300); display: flex; align-items: center; justify-content: center; transition: all var(--transition); background: var(--white); }
+.check .box { width: 20px; height: 20px; border-radius: 6px; border: 1.5px solid var(--gray-300); display: flex; align-items: center; justify-content: center; transition: background-color var(--transition), border-color var(--transition); background: var(--white); }
 .check .box svg { width: 13px; height: 13px; color: #fff; opacity: 0; }
 .check input:checked + .box { background: var(--blue); border-color: var(--blue); }
 .check input:checked + .box svg { opacity: 1; }
 
-/* ---- İlerleme ---- */
+/* ---- İlerleme ----
+   Çubuk 'width' yerine 'transform: scaleX()' ile büyür: genişlik değişimi
+   yerleşimi (layout) tetikler, ölçekleme ise yalnızca GPU birleştirmesini.
+   Saniyede birkaç kez güncellenen bir çubukta fark hissedilir. */
 .actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .progress-row { display: flex; align-items: center; gap: 14px; }
 .track { flex: 1; height: 8px; background: var(--gray-100); border-radius: var(--radius-full); overflow: hidden; }
-.track .fill { height: 100%; width: 0%; background: var(--blue); border-radius: var(--radius-full); transition: width 0.25s ease; }
-.count { font-size: 12.5px; font-weight: 600; color: var(--gray-500); white-space: nowrap; }
+.track .fill {
+  height: 100%; width: 100%; background: var(--blue); border-radius: var(--radius-full);
+  transform: scaleX(0); transform-origin: left center; will-change: transform;
+  transition: transform 0.25s ease;
+}
+.count { font-size: 12.5px; font-weight: 600; color: var(--gray-500); white-space: nowrap; min-width: 96px; text-align: right; }
 
 /* ---- Log ---- */
 .log-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+/* contain: content -> log'a satır eklenmesi sayfanın geri kalanının yeniden
+   yerleşimini tetiklemez. overflow-anchor: none -> tarayıcının kaydırma
+   çıpalama düzeltmeleri kaydırmayı zıplatmaz. */
 .log {
   background: var(--gray-50); border: 1.5px solid var(--gray-200); border-radius: var(--radius-md);
   padding: 12px 14px; font-size: 12.5px; line-height: 1.85; height: 190px; overflow-y: auto;
   font-family: 'Inter', ui-monospace, monospace;
+  contain: content; overflow-anchor: none; overflow-wrap: anywhere;
 }
 .log .l-ok { color: var(--green-dark); }
 .log .l-error { color: var(--red); }
@@ -189,8 +207,28 @@ select { cursor: pointer; -webkit-appearance: none; appearance: none;
 .toast.info .ic { color: var(--blue); }
 @keyframes toastIn { from { opacity: 0; transform: translateY(-10px); } to { opacity: 1; transform: translateY(0); } }
 
+/* ---- Açılış perdesi ---- */
+.boot {
+  position: fixed; inset: 0; z-index: 400; background: var(--gray-50);
+  display: flex; align-items: center; justify-content: center;
+  opacity: 1; transition: opacity 0.25s ease;
+}
+.boot.gone { opacity: 0; pointer-events: none; }
+.boot-card { text-align: center; display: flex; flex-direction: column; align-items: center; gap: 12px; }
+.boot-title { font-size: 15px; font-weight: 700; }
+.boot-msg { font-size: 13px; color: var(--gray-500); max-width: 460px; line-height: 1.6; }
+.boot-msg.err { color: var(--red); font-weight: 500; }
+.boot-spin {
+  width: 34px; height: 34px; border-radius: 50%;
+  border: 3px solid var(--gray-200); border-top-color: var(--blue);
+  animation: spin 0.8s linear infinite;   /* transform: GPU'da döner, ana iş parçacığını meşgul etmez */
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
 /* ---- Onay modalı ---- */
-.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.5); backdrop-filter: blur(6px); z-index: 300; display: flex; align-items: center; justify-content: center; padding: 24px; }
+/* Arka plan bulanıklığı yerine biraz daha koyu bir örtü: aynı odak etkisi,
+   tüm sayfayı yeniden boyamadan (modal açılışı anında gelir). */
+.modal-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 300; display: flex; align-items: center; justify-content: center; padding: 24px; }
 .modal-backdrop.hidden { display: none; }
 .modal { background: var(--white); border: 1px solid var(--gray-200); border-radius: var(--radius-xl); box-shadow: var(--shadow-lg); max-width: 460px; width: 100%; padding: 24px; animation: toastIn 0.25s cubic-bezier(0.34,1.56,0.64,1); }
 .modal h3 { font-size: 18px; font-weight: 800; margin-bottom: 12px; }

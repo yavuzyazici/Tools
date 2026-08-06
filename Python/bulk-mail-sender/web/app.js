@@ -1,19 +1,41 @@
 /* =====================================================================
    Toplu Fatura Mail Gönderici — arayüz mantığı
    Python (pywebview) köprüsü: window.pywebview.api.*
-   Backend'den arayüze itilen çağrılar: window.__onProgress/__onLog/...
+
+   Akıcılık (kasmama) ilkeleri
+   ---------------------------
+   1. DOM'a satır satır yazılmaz. Log satırları bir diziye toplanır ve ekranın
+      bir sonraki karesinde (requestAnimationFrame) tek seferde eklenir.
+   2. Log alanı sınırlıdır (LOG_MAX). Binlerce <div> tarayıcıyı yavaşlatır;
+      tam kayıt zaten gonderim_sonuclari.csv dosyasındadır.
+   3. İlerleme çubuğu 'width' yerine 'transform' ile güncellenir: yerleşim
+      (layout) değil yalnızca birleştirme (compositing) tetiklenir.
+      Değer değişmediyse DOM'a hiç dokunulmaz.
+   4. Köprü çağrıları uyarlanabilir aralıklıdır ve üst üste binmez: bir çağrı
+      bitmeden yenisi başlamaz, olay yoksa aralık kendiliğinden uzar.
+   5. Uzun işler Python tarafında arka planda çalışır; arayüz hiçbir zaman
+      bir cevabı bekleyerek kilitlenmez.
    ===================================================================== */
 
 const $ = (id) => document.getElementById(id);
-let apiReady = false;
-let running = false;
-let headers = [];   // mevcut sayfanın başlık listesi
+
+const LOG_MAX = 800;          // log alanında tutulacak en fazla satır
+const POLL_FAST = 120;        // olay akarken çekme aralığı (ms)
+const POLL_SLOW = 400;        // sessizken çekme aralığı (ms)
+
+let running = false;          // gönderim/kontrol sürüyor mu
+let headers = [];             // mevcut sayfanın başlık listesi
 
 /* ---- Excel sütun harfi: 0->A, 1->B ... ---- */
 function colLetter(i) {
   let s = ""; i += 1;
   while (i) { const r = (i - 1) % 26; s = String.fromCharCode(65 + r) + s; i = Math.floor((i - 1) / 26); }
   return s;
+}
+
+/* ---- Metni HTML'e gömerken güvenli hale getir ---- */
+function esc(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
 /* ---- Toast bildirimi ---- */
@@ -26,7 +48,7 @@ function toast(msg, type = "info", ms = 3200) {
     success: '<path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/>',
     info: '<circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/>',
   };
-  el.innerHTML = `<svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${icons[type] || icons.info}</svg><span>${msg}</span>`;
+  el.innerHTML = `<svg class="ic" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">${icons[type] || icons.info}</svg><span>${esc(msg)}</span>`;
   wrap.appendChild(el);
   setTimeout(() => { el.style.opacity = "0"; el.style.transition = "opacity .3s"; setTimeout(() => el.remove(), 300); }, ms);
 }
@@ -44,36 +66,111 @@ function confirmModal(title, body, okLabel = "Başlat") {
   });
 }
 
-/* ---- Log ---- */
+/* ===================================================================
+   Log — toplu (batch) yazım
+   Satırlar önce diziye girer, bir sonraki karede tek DocumentFragment
+   olarak eklenir. Böylece 500 satırlık bir akış 500 yerine 1 yerleşim
+   (reflow) maliyeti çıkarır.
+   =================================================================== */
+let logQueue = [];
+let logFlushQueued = false;
+
 function logLine(level, msg) {
-  const box = $("log");
-  const div = document.createElement("div");
-  div.className = "l-" + level;
-  div.textContent = msg;
-  box.appendChild(div);
-  box.scrollTop = box.scrollHeight;
+  logQueue.push([level, msg]);
+  scheduleLogFlush();
 }
 
-/* ---- Durum rozeti ---- */
-function setBusy(busy) {
+function logLines(lines) {          // [[level, msg], ...]
+  if (!lines || !lines.length) return;
+  for (let i = 0; i < lines.length; i++) logQueue.push(lines[i]);
+  scheduleLogFlush();
+}
+
+function scheduleLogFlush() {
+  if (logFlushQueued) return;
+  logFlushQueued = true;
+  requestAnimationFrame(flushLog);
+}
+
+function flushLog() {
+  logFlushQueued = false;
+  if (!logQueue.length) return;
+
+  const box = $("log");
+  // Ekrana sığmayacak kadar çok satır geldiyse yalnızca son LOG_MAX tanesini
+  // düğüme çevir: görünmeyecek satırlar için DOM üretmenin anlamı yok.
+  let pending = logQueue;
+  logQueue = [];
+  if (pending.length > LOG_MAX) pending = pending.slice(-LOG_MAX);
+
+  // Kullanıcı yukarı kaydırıp bir şey okuyorsa otomatik kaydırma yapmayız.
+  const stick = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+
+  const frag = document.createDocumentFragment();
+  for (let i = 0; i < pending.length; i++) {
+    const div = document.createElement("div");
+    div.className = "l-" + pending[i][0];
+    div.textContent = pending[i][1];
+    frag.appendChild(div);
+  }
+  box.appendChild(frag);
+
+  let over = box.childElementCount - LOG_MAX;
+  while (over-- > 0) box.removeChild(box.firstChild);
+
+  if (stick) box.scrollTop = box.scrollHeight;
+}
+
+function clearLog() {
+  logQueue = [];
+  $("log").textContent = "";
+}
+
+/* ===================================================================
+   İlerleme çubuğu — transform ile, yalnızca değer değiştiğinde
+   =================================================================== */
+let lastRatio = -1;
+let lastCount = "";
+
+function setProgress(ratio, text) {
+  const r = Math.max(0, Math.min(1, ratio || 0));
+  if (Math.abs(r - lastRatio) >= 0.001) {
+    $("fill").style.transform = "scaleX(" + r + ")";
+    lastRatio = r;
+  }
+  if (text !== undefined && text !== lastCount) {
+    $("count").textContent = text;
+    lastCount = text;
+  }
+}
+
+/* ---- Durum rozeti / buton durumları ---- */
+function setBusy(busy, label) {
   running = busy;
   const s = $("status");
-  if (busy) { s.className = "status-badge busy"; s.innerHTML = '<span class="dot"></span> Gönderiliyor...'; }
-  else { s.className = "status-badge"; s.innerHTML = '<span class="dot"></span> Hazır'; }
+  if (busy) {
+    s.className = "status-badge busy";
+    s.innerHTML = '<span class="dot"></span> ' + esc(label || "Gönderiliyor...");
+  } else {
+    s.className = "status-badge";
+    s.innerHTML = '<span class="dot"></span> Hazır';
+  }
   $("btn-start").disabled = busy;
   $("btn-check").disabled = busy;
+  $("btn-browse").disabled = busy;
+  $("btn-read").disabled = busy;
   $("btn-stop").disabled = !busy;
 }
 
 /* ---- Sütun/sayfa açılır listelerini doldur ---- */
 function fillColumns(hdrs) {
   headers = hdrs || [];
-  const opts = headers.map((h, i) => `<option value="${i}">${colLetter(i)} — ${h || "(boş)"}</option>`).join("");
+  const opts = headers.map((h, i) => `<option value="${i}">${colLetter(i)} — ${esc(h || "(boş)")}</option>`).join("");
   $("email-col").innerHTML = opts;
   $("attach-col").innerHTML = opts;
 }
 function fillSheets(sheets, selected) {
-  $("sheet").innerHTML = (sheets || []).map((s) => `<option value="${s}">${s}</option>`).join("");
+  $("sheet").innerHTML = (sheets || []).map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join("");
   if (selected) $("sheet").value = selected;
 }
 
@@ -106,7 +203,7 @@ function currentMethod() {
 
 /* ---- Ayarları geri yükle ---- */
 function applySettings(d) {
-  if (!d) return;
+  if (!d) return null;
   $("xlsx").value = d.xlsx || "";
   $("subject").value = d.subject || "";
   $("body").value = d.body || "";
@@ -131,59 +228,158 @@ function selectMethod(m) {
 }
 
 /* ===================================================================
-   Olay çekme (pull) — worker thread'ten evaluate_js ile itmek yerine,
-   arayüz olayları düzenli aralıkla çeker. pywebview'de donmayı önler.
+   Olay çekme (pull)
+   Worker thread'ten evaluate_js ile itmek pywebview'de kilitlenmeye yol
+   açtığı için olaylar Python tarafında birikir, arayüz toplu çeker.
+   Aralık uyarlanabilir: olay geldikçe hızlanır, sessizlikte yavaşlar.
    =================================================================== */
 let pollTimer = null;
 let polling = false;
+let pollDelay = POLL_FAST;
 
-function applyEvent(ev) {
-  if (ev.t === "progress") {
-    $("fill").style.width = ev.total ? (ev.done / ev.total * 100) + "%" : "0%";
-    $("count").textContent = `${ev.done} / ${ev.total}  (✓${ev.ok} ✗${ev.fail})`;
-  } else if (ev.t === "log") {
-    logLine(ev.level, ev.msg);
-  } else if (ev.t === "done") {
-    const res = ev.result;
-    stopPolling();
-    setBusy(false);
+/* Tek bir zamanlayıcı yaşar: zincir asla ne kopar ne de ikiye bölünür. */
+function schedulePump(ms) {
+  if (!running || pollTimer !== null) return;
+  pollTimer = setTimeout(pump, ms);
+}
+
+function startPolling() {
+  pollDelay = POLL_FAST;
+  schedulePump(0);
+}
+
+function stopPolling() {
+  if (pollTimer !== null) { clearTimeout(pollTimer); pollTimer = null; }
+}
+
+async function pump() {
+  pollTimer = null;
+  // Önceki çağrı hâlâ sürüyorsa üstüne binme; ama zinciri de koparma.
+  if (polling) { schedulePump(POLL_FAST); return; }
+  polling = true;
+  let hadEvents = false;
+  try {
+    const ev = await window.pywebview.api.olaylari_al();
+    hadEvents = applyEvents(ev);
+  } catch (e) {
+    /* pencere kapanıyor olabilir; sessizce geç */
+  } finally {
+    polling = false;
+  }
+  // Olay aktıkça sık, sessizlikte seyrek çek: boşa köprü çağrısı yapma.
+  pollDelay = hadEvents ? POLL_FAST : Math.min(POLL_SLOW, pollDelay + 60);
+  schedulePump(pollDelay);
+}
+
+/* Son bir kez çekip kalan olayları boşalt (iş bittikten sonra). */
+function drainOnce() {
+  setTimeout(async () => {
+    try { applyEvents(await window.pywebview.api.olaylari_al()); } catch (e) {}
+  }, 0);
+}
+
+function applyEvents(ev) {
+  if (!ev) return false;
+  let any = false;
+
+  if (ev.logs && ev.logs.length) { logLines(ev.logs); any = true; }
+  if (ev.dropped) { logLine("info", `(hızlı akış: ${ev.dropped} log satırı ekranda gösterilmedi — tam kayıt CSV'de)`); any = true; }
+
+  if (ev.progress) {
+    const [done, total, ok, fail] = ev.progress;
+    setProgress(total ? done / total : 0, `${done} / ${total}  (✓${ok} ✗${fail})`);
+    any = true;
+  }
+  if (ev.scan) {
+    const [done, total] = ev.scan;
+    setProgress(total ? done / total : 0, `Kontrol: ${done} / ${total}`);
+    any = true;
+  }
+  if (ev.finals && ev.finals.length) {
+    ev.finals.forEach(applyFinal);
+    any = true;
+  }
+  return any;
+}
+
+function applyFinal(f) {
+  stopPolling();
+  setBusy(false);
+  if (f.t === "done") {
+    const res = f.result;
     let msg = `Tamamlandı — Gönderilen: ${res.sent}, Hatalı: ${res.failed}`;
     if (res.stopped) msg = "Durduruldu — " + msg;
     logLine("info", "=== " + msg + " ===");
     toast(msg, res.failed ? "info" : "success", 5000);
+  } else if (f.t === "check_done") {
+    renderCheckReport(f.report);
+  } else if (f.t === "error") {
+    logLine("error", "Beklenmeyen hata: " + f.msg);
+    toast("Beklenmeyen hata: " + f.msg, "error", 6000);
   }
+  flushLog();
 }
 
-async function pump() {
-  if (polling) return;            // önceki çağrı bitmeden yenisini başlatma
-  polling = true;
-  try {
-    const evs = await window.pywebview.api.olaylari_al();
-    if (evs && evs.length) evs.forEach(applyEvent);
-  } catch (e) {}
-  polling = false;
-}
+/* ---- Ön kontrol raporu ---- */
+function renderCheckReport(rep) {
+  if (!rep) return;
+  if (rep.stopped) logLine("info", "Kontrol kullanıcı tarafından durduruldu (kısmi sonuç).");
+  logLine("info", `Toplam satır: ${rep.total}  |  Sorunsuz: ${rep.ok}`);
+  logLine("info", `Geçersiz e-posta: ${rep.bad_email.length}  |  Ek boş: ${rep.empty_attach.length}  |  Ek bulunamadı: ${rep.missing_attach.length}  |  Tekrarlı ek: ${rep.duplicate_attach.length}`);
 
-function startPolling() { if (!pollTimer) pollTimer = setInterval(pump, 200); }
-function stopPolling() { if (pollTimer) { clearInterval(pollTimer); pollTimer = null; } setTimeout(pump, 0); }
+  const dump = (title, items, level) => {
+    if (!items.length) return;
+    logLine(level, `— ${title} (${items.length}):`);
+    const shown = Math.min(items.length, 50);
+    for (let i = 0; i < shown; i++) {
+      const it = items[i];
+      logLine(level, `    satır ${it[0]}: ${it[1] || "(boş)"} → ${it[3]}`);
+    }
+    if (items.length > shown) logLine(level, `    ... ve ${items.length - shown} satır daha (tam liste CSV'de)`);
+  };
+  dump("Geçersiz e-posta", rep.bad_email, "error");
+  dump("Ek yolu boş", rep.empty_attach, "error");
+  dump("Ek dosyası bulunamadı", rep.missing_attach, "error");
+  dump("Tekrarlı ek", rep.duplicate_attach, "info");
+  if (rep.csv) logLine("info", "Sorun listesi kaydedildi: " + rep.csv);
+
+  setProgress(1, `${rep.total} satır tarandı`);
+  const problems = rep.bad_email.length + rep.empty_attach.length + rep.missing_attach.length;
+  if (problems === 0) toast(`✔ Her şey yolunda — ${rep.total} satırın tamamı geçerli.`, "success", 5000);
+  else toast(`${problems} sorunlu satır bulundu. Ayrıntılar log alanında.`, "error", 5000);
+}
 
 /* ===================================================================
    API çağrıları
    =================================================================== */
+let readingColumns = false;
+
 async function readColumns(keepSel) {
   const path = $("xlsx").value.trim();
   if (!path) { toast("Önce bir Excel dosyası seçin.", "error"); return; }
-  const emailSel = keepSel ? keepSel.email_col : null;
-  const attachSel = keepSel ? keepSel.attach_col : null;
-  const res = await window.pywebview.api.sutunlari_oku(path, $("sheet").value || null);
-  if (res.error) { toast("Excel okunamadı: " + res.error, "error"); return; }
-  fillSheets(res.sheets, res.sheet);
-  fillColumns(res.headers);
-  // Kayıtlı seçim varsa uygula, yoksa akıllı tahmin
-  if (emailSel != null && emailSel < res.headers.length) $("email-col").value = emailSel;
-  else guessColumn("email-col", ["email", "e-posta", "mail", "adres"]);
-  if (attachSel != null && attachSel < res.headers.length) $("attach-col").value = attachSel;
-  else guessColumn("attach-col", ["ek", "attach", "dosya", "pdf", "yol", "path", "fatura"]);
+  if (readingColumns) return;
+  readingColumns = true;
+  const s = $("status");
+  const prev = s.innerHTML;
+  s.innerHTML = '<span class="dot"></span> Excel okunuyor...';
+  s.className = "status-badge busy";
+  try {
+    const emailSel = keepSel ? keepSel.email_col : null;
+    const attachSel = keepSel ? keepSel.attach_col : null;
+    const res = await window.pywebview.api.sutunlari_oku(path, $("sheet").value || null);
+    if (res.error) { toast("Excel okunamadı: " + res.error, "error"); return; }
+    fillSheets(res.sheets, res.sheet);
+    fillColumns(res.headers);
+    // Kayıtlı seçim varsa uygula, yoksa akıllı tahmin
+    if (emailSel != null && !isNaN(emailSel) && emailSel < res.headers.length) $("email-col").value = emailSel;
+    else guessColumn("email-col", ["email", "e-posta", "mail", "adres"]);
+    if (attachSel != null && !isNaN(attachSel) && attachSel < res.headers.length) $("attach-col").value = attachSel;
+    else guessColumn("attach-col", ["ek", "attach", "dosya", "pdf", "yol", "path", "fatura"]);
+  } finally {
+    readingColumns = false;
+    if (!running) { s.className = "status-badge"; s.innerHTML = '<span class="dot"></span> Hazır'; }
+    else s.innerHTML = prev;
+  }
 }
 
 function guessColumn(selId, keywords) {
@@ -194,7 +390,6 @@ function guessColumn(selId, keywords) {
 }
 
 async function saveSettings() {
-  if (!apiReady) return;
   try { await window.pywebview.api.ayarlari_kaydet(collectJob()); } catch (e) {}
 }
 
@@ -204,7 +399,7 @@ async function saveSettings() {
 function wire() {
   $("btn-browse").onclick = async () => {
     const p = await window.pywebview.api.sec_dosya();
-    if (p) { $("xlsx").value = p; await readColumns(null); }
+    if (p) { $("xlsx").value = p; $("sheet").innerHTML = ""; await readColumns(null); }
   };
   $("btn-read").onclick = () => readColumns(null);
   $("sheet").onchange = () => readColumns(collectJob());
@@ -225,29 +420,18 @@ function wire() {
     if (res && res.error) toast(res.error, "error");
   };
 
-  $("btn-clear-log").onclick = () => { $("log").innerHTML = ""; };
+  $("btn-clear-log").onclick = clearLog;
 
   $("btn-check").onclick = async () => {
     const job = collectJob();
     if (!job.xlsx) { toast("Önce geçerli bir Excel dosyası seçin.", "error"); return; }
+    clearLog();
     logLine("info", "=== KONTROL (göndermeden tarama) ===");
-    const rep = await window.pywebview.api.kontrol_et(job);
-    if (rep.error) { toast(rep.error, "error"); return; }
-    logLine("info", `Toplam satır: ${rep.total}  |  Sorunsuz: ${rep.ok}`);
-    logLine("info", `Geçersiz e-posta: ${rep.bad_email.length}  |  Ek boş: ${rep.empty_attach.length}  |  Ek bulunamadı: ${rep.missing_attach.length}  |  Tekrarlı ek: ${rep.duplicate_attach.length}`);
-    const dump = (title, items, level) => {
-      if (!items.length) return;
-      logLine(level, `— ${title} (${items.length}):`);
-      items.slice(0, 50).forEach((it) => logLine(level, `    satır ${it[0]}: ${it[1] || "(boş)"} → ${it[3]}`));
-      if (items.length > 50) logLine(level, `    ... ve ${items.length - 50} satır daha (tam liste CSV'de)`);
-    };
-    dump("Geçersiz e-posta", rep.bad_email, "error");
-    dump("Ek yolu boş", rep.empty_attach, "error");
-    dump("Ek dosyası bulunamadı", rep.missing_attach, "error");
-    dump("Tekrarlı ek", rep.duplicate_attach, "info");
-    const problems = rep.bad_email.length + rep.empty_attach.length + rep.missing_attach.length;
-    if (problems === 0) toast(`✔ Her şey yolunda — ${rep.total} satırın tamamı geçerli.`, "success", 5000);
-    else toast(`${problems} sorunlu satır bulundu. Ayrıntılar log alanında.`, "error", 5000);
+    setProgress(0, "Kontrol ediliyor...");
+    setBusy(true, "Kontrol ediliyor...");
+    startPolling();
+    const res = await window.pywebview.api.kontrol_et(job);
+    if (res && res.error) { stopPolling(); setBusy(false); toast(res.error, "error"); }
   };
 
   $("btn-start").onclick = async () => {
@@ -259,32 +443,94 @@ function wire() {
     const ok = await confirmModal("Gönderimi başlat", `${mode}\nYöntem: ${job.method}\nGönderen: ${job.sender}\nKonu: ${job.subject}\nGönderilecek: ${n}`, "Başlat");
     if (!ok) return;
     await saveSettings();
-    $("log").innerHTML = "";
-    $("fill").style.width = "0%";
+    clearLog();
+    setProgress(0, "0 / 0");
     logLine("info", "=== Gönderim başlatılıyor ===");
-    setBusy(true);
+    setBusy(true, "Gönderiliyor...");
     startPolling();
     const res = await window.pywebview.api.gonder(job);
     if (res && res.error) { stopPolling(); setBusy(false); toast(res.error, "error"); }
   };
 
-  $("btn-stop").onclick = () => { window.pywebview.api.durdur(); logLine("info", "Durdurma istendi, mevcut mail bitince duracak..."); $("btn-stop").disabled = true; };
+  $("btn-stop").onclick = () => {
+    window.pywebview.api.durdur();
+    logLine("info", "Durdurma istendi, mevcut işlem bitince duracak...");
+    $("btn-stop").disabled = true;
+    drainOnce();
+  };
 
   // Kapanışta ayarları kaydet
   window.addEventListener("beforeunload", saveSettings);
 }
 
-/* ---- Başlangıç ---- */
+/* ===================================================================
+   Açılış
+   Sıra önemlidir: önce perde + butonlar, sonra köprü, EN SON Excel.
+   Hiçbir adım bir diğerini bekletmez; pencere ilk kareden itibaren canlıdır.
+   =================================================================== */
+function bootMsg(msg, isError) {
+  const el = $("boot-msg");
+  if (!el) return;
+  el.textContent = msg;
+  el.className = "boot-msg" + (isError ? " err" : "");
+}
+
+function bootKapat() {
+  const b = $("boot");
+  if (!b) return;
+  b.classList.add("gone");
+  setTimeout(() => { if (b.parentNode) b.parentNode.removeChild(b); }, 300);
+}
+
+function apiHazirMi() {
+  return !!(window.pywebview && window.pywebview.api && window.pywebview.api.hazir);
+}
+
+/* Köprüyü bekler. 'pywebviewready' olayı bizden önce tetiklenmiş olabileceği
+   için ayrıca yoklama da yapılır — yalnızca olaya güvenmek sonsuz bekleme riskidir. */
+function apiBekle() {
+  return new Promise((resolve, reject) => {
+    if (apiHazirMi()) return resolve();
+    let gecen = 0;
+    const t = setInterval(() => {
+      gecen += 100;
+      if (apiHazirMi()) { clearInterval(t); resolve(); return; }
+      if (gecen === 2500) bootMsg("Python köprüsü bekleniyor…");
+      if (gecen === 8000) bootMsg("Hâlâ bekleniyor… (WebView2 ilk açılışta yavaş olabilir)");
+      if (gecen >= 25000) { clearInterval(t); reject(new Error("zaman aşımı")); }
+    }, 100);
+    window.addEventListener("pywebviewready", () => {
+      if (apiHazirMi()) { clearInterval(t); resolve(); }
+    });
+  });
+}
+
+async function boot() {
+  wire();                                   // butonlar daha köprü gelmeden bağlanır
+  try {
+    await apiBekle();
+  } catch (e) {
+    bootMsg("Python köprüsü kurulamadı. Uygulamayı kapatıp yeniden açın. "
+            + "Sorun sürerse %APPDATA%\\TopluFaturaMailer\\calisma.log dosyasına bakın.", true);
+    return;                                 // perdeyi kapatmıyoruz: sahte arayüz göstermeyelim
+  }
+  try { await window.pywebview.api.hazir(); } catch (e) {}
+  bootKapat();
+  init();                                   // await YOK: arayüz beklemesin
+}
+
 async function init() {
-  apiReady = true;
-  wire();
-  const d = await window.pywebview.api.ayarlari_yukle();
+  let d = null;
+  try { d = await window.pywebview.api.ayarlari_yukle(); } catch (e) {}
   const saved = applySettings(d);
   if (saved && saved.xlsx) {
-    $("sheet").innerHTML = saved.sheet ? `<option>${saved.sheet}</option>` : "";
+    $("sheet").innerHTML = saved.sheet ? `<option>${esc(saved.sheet)}</option>` : "";
     if (saved.sheet) $("sheet").value = saved.sheet;
-    await readColumns(saved);
+    // Excel okuma arka planda: kopuk bir ağ yolu bile arayüzü kilitlemez,
+    // durum rozetinde "Excel okunuyor..." görünür.
+    readColumns(saved);
   }
 }
 
-window.addEventListener("pywebviewready", init);
+if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", boot);
+else boot();

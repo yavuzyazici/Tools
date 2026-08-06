@@ -22,6 +22,30 @@ yapabilirsiniz.
 - 💾 **Ayarları hatırlar** — tüm alanlar (SMTP şifresi dahil) `%APPDATA%` altında saklanır.
 - 🎨 **yavuzyazici.com teması** — arayüz siteyle aynı tasarım dili (Inter fontu, mavi vurgu) ile `web/` klasöründeki HTML/CSS'ten çizilir.
 
+## Performans / akıcılık
+
+Uygulama büyük listelerde (1000+ satır) donmayacak şekilde tasarlandı:
+
+- **Arayüz hiçbir zaman beklemez.** Excel okuma, ön kontrol ve gönderim arka planda çalışır;
+  pencere her an tıklanabilir, **Durdur** anında yanıt verir.
+- **Ön kontrol paralel.** Ek dosyalarının varlığı iş parçacığı havuzunda aynı anda sorgulanır.
+  Ağ sürücüsündeki 300 dosyalık ölçümde: **1,55 sn → 0,06 sn**.
+- **Mail başına gereksiz sunucu turu yok.** SMTP bağlantısı her mailden önce NOOP ile
+  yoklanmaz; yalnızca bir süredir boştaysa kontrol edilir. Aynı ölçümde gönderim
+  **13,2 sn → 9,0 sn**.
+- **Excel bir kez okunur.** Sonuç (dosya + değişiklik zamanı) anahtarıyla önbelleğe alınır;
+  "Sütunları Oku → Kontrol Et → Gönder" zincirinde dosya tekrar ayrıştırılmaz.
+- **Gönderim kaydı tamponlu.** CSV her satırda açılıp kapatılmaz. Dosya Excel'de açık
+  (kilitli) olsa bile gönderim durmaz, yalnızca uyarı verir.
+- **Ekler önden okunur.** Bir mail giderken sonraki eklerin içeriği arka planda belleğe alınır;
+  aynı ek birden çok satırda geçiyorsa diskten tekrar okunmaz.
+- **Log alanı sınırlıdır** (arayüzde son 800 satır) ve tek seferde toplu çizilir. Tam kayıt
+  her zaman `gonderim_sonuclari.csv` dosyasındadır.
+
+> **Not:** "Mailler arası bekleme" iki mailin *başlangıcı* arasındaki en az süredir.
+> 1 sn'lik ayarda gönderimin kendisi 0,8 sn sürdüyse yalnızca 0,2 sn beklenir; sunucu
+> hız sınırına uyulur ama boşa zaman harcanmaz.
+
 ## Kurulum
 
 Python 3.9+ gereklidir.
@@ -50,11 +74,38 @@ python app.py
 
 ## Derleme (.exe)
 
-```bash
-build.bat
+```bat
+build.bat              :: KLASÖR sürümü (varsayılan) -> dist\TopluFaturaMailer\TopluFaturaMailer.exe
+build.bat tanilama     :: konsollu tanılama sürümü (hatalar ekranda görünür)
+build.bat tekdosya     :: tek .exe -> dist\TopluFaturaMailer.exe
 ```
 
-`web/` klasörü (HTML/CSS + Inter fontu) exe'nin içine gömülür; çıktı `dist/TopluFaturaMailer.exe` tek dosyadır ve internet gerektirmez.
+**Klasör sürümü önerilir.** Tek dosya (`onefile`) sürümü her çalıştırmada ~28 MB'lık
+içeriği `%TEMP%` altına açar, Windows Defender de bu dosyaları her seferinde tarar;
+bu sırada pencere görünür ama mesaj döngüsü çalışmadığı için Windows **"Yanıt vermiyor"**
+der. Klasör sürümünde bu adım yoktur, uygulama anında açılır. Kod iki sürümde de aynıdır.
+Klasör sürümünü dağıtırken **klasörün tamamını** kopyalayın (exe tek başına çalışmaz);
+masaüstüne kısayol oluşturabilirsiniz.
+
+`web/` klasörü (HTML/CSS + Inter fontu) çıktının içine gömülür; internet gerekmez.
+
+## "Yanıt vermiyor" / açılmıyor ise
+
+1. **Önce kaynaktan deneyin:** `python ui.py`. Burada sorun yoksa mesele paketlemededir
+   (yukarıdaki klasör sürümünü kullanın).
+2. **Tanılama günlüğü:** her çalıştırma `%APPDATA%\TopluFaturaMailer\calisma.log`
+   dosyasına açılış aşamalarını ve 0,3 sn'den uzun süren her işlemi yazar.
+   `YAVAŞ sutunlari_oku: 45.2 sn` gibi bir satır, örneğin kayıtlı Excel yolunun
+   kopuk bir ağ sürücüsünde olduğunu gösterir.
+3. **Konsollu sürüm:** `build.bat tanilama` ile derleyip çalıştırın; arkadaki siyah
+   pencerede hata mesajları görünür. Bu sürüm ayrıca 20 saniyede bir tüm iş
+   parçacıklarının nerede olduğunu günlüğe döker — takılma varsa yeri kesin belli olur.
+4. **WebView2:** Arayüz Microsoft Edge WebView2 ile çizilir. Kurulu değilse uygulama
+   açılışta uyarı verir; günlükte `motor=mshtml` görürseniz eksik demektir.
+   [Evergreen Standalone Installer](https://developer.microsoft.com/microsoft-edge/webview2/)
+   ile kurun (`motor=edgechromium` olmalı).
+5. Uygulama açılırken pencerede **"Arayüz başlatılıyor…"** perdesi görünür; köprü
+   kurulamazsa perde nedenini yazar. Boş/donmuş bir pencere görmezsiniz.
 
 ## Kullanım adımları
 

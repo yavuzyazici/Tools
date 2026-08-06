@@ -8,6 +8,16 @@
   <link rel="stylesheet" href="theme.css" />
 </head>
 <body>
+  <!-- Açılış perdesi: HTML ayrıştırılır ayrıştırılmaz görünür. Pencere hiçbir
+       zaman boş/donmuş görünmez; köprü kurulamazsa nedenini burada yazar. -->
+  <div class="boot" id="boot">
+    <div class="boot-card">
+      <div class="boot-spin"></div>
+      <div class="boot-title">Toplu Fatura Mail Gönderici</div>
+      <div class="boot-msg" id="boot-msg">Arayüz başlatılıyor…</div>
+    </div>
+  </div>
+
   <!-- Üst bar -->
   <div class="topbar">
     <div class="brand">
@@ -119,7 +129,7 @@
     <div class="card">
       <div class="card-label"><span class="num">5</span> Çalışma ayarları</div>
       <div class="row">
-        <div class="field" style="max-width:160px">
+        <div class="field" style="max-width:160px" title="İki mailin başlangıcı arasındaki en az süre. Gönderimin kendisi bu süreden düşülür: 1 sn'lik sınırda gönderim 0,8 sn sürdüyse yalnızca 0,2 sn beklenir.">
           <span class="field-label">Mailler arası bekleme (sn)</span>
           <input type="number" id="delay" value="1.0" step="0.1" min="0" />
         </div>

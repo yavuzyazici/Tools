@@ -20,6 +20,10 @@ import core
 
 APP_TITLE = "Toplu Fatura Mail Gönderici"
 
+# Log kutusunda tutulacak en fazla satır. Tk Text widget'ı on binlerce satırda
+# gözle görülür yavaşlar; tam kayıt zaten gonderim_sonuclari.csv dosyasındadır.
+LOG_MAX_LINES = 1500
+
 
 def _settings_file() -> str:
     """Ayar dosyasının tam yolu.
@@ -336,20 +340,49 @@ class App(tk.Tk):
         )
 
     def _check(self):
-        """Hiçbir mail göndermeden tüm listeyi tarar ve rapor verir."""
+        """Hiçbir mail göndermeden tüm listeyi tarar ve rapor verir.
+
+        Tarama binlerce dosya sorgusu içerebildiğinden ARKA PLANDA çalışır;
+        aksi halde Tk penceresi tarama boyunca donar (yanıt vermiyor görünür).
+        """
+        if self._worker and self._worker.is_alive():
+            return
         job = self._collect_job()
         if job is None:
             return
         if not os.path.isfile(job.xlsx_path):
             messagebox.showerror(APP_TITLE, "Önce geçerli bir Excel dosyası seçin.")
             return
-        try:
-            rep = core.check_job(job)
-        except Exception as exc:  # noqa: BLE001
-            messagebox.showerror(APP_TITLE, f"Kontrol sırasında hata:\n{exc}")
-            return
 
+        self._stop_flag.clear()
+        self.progress["value"] = 0
+        self.btn_check.configure(state="disabled")
+        self.btn_start.configure(state="disabled")
+        self.btn_stop.configure(state="normal")
         self._log("info", "=== KONTROL (göndermeden tarama) ===")
+
+        def work():
+            try:
+                rep = core.check_job(
+                    job,
+                    on_progress=lambda done, total: self._queue.put(("scan", (done, total))),
+                    should_stop=self._stop_flag.is_set,
+                )
+            except Exception as exc:  # noqa: BLE001
+                self._queue.put(("check_error", str(exc)))
+                return
+            self._queue.put(("check_done", (job, rep)))
+
+        self._worker = threading.Thread(target=work, daemon=True, name="kontrol")
+        self._worker.start()
+
+    def _show_check_report(self, job, rep):
+        """Arka planda biten taramanın sonucunu log'a ve özet kutusuna döker."""
+        self.btn_check.configure(state="normal")
+        self.btn_start.configure(state="normal")
+        self.btn_stop.configure(state="disabled")
+        if rep.get("stopped"):
+            self._log("info", "Kontrol durduruldu (kısmi sonuç).")
         self._log("info", f"Toplam satır: {rep['total']}  |  Sorunsuz: {rep['ok']}")
         self._log("info",
                   f"Geçersiz e-posta: {len(rep['bad_email'])}  |  "
@@ -430,6 +463,7 @@ class App(tk.Tk):
         self._save_settings()
         self._stop_flag.clear()
         self.progress["value"] = 0
+        self.btn_check.configure(state="disabled")
         self.btn_start.configure(state="disabled")
         self.btn_stop.configure(state="normal")
         self._log("info", "=== Gönderim başlatılıyor ===")
@@ -444,38 +478,76 @@ class App(tk.Tk):
         def on_log(level, msg):
             self._queue.put(("log", (level, msg)))
 
-        result = core.run_job(
-            job,
-            on_progress=on_progress,
-            on_log=on_log,
-            should_stop=self._stop_flag.is_set,
-        )
+        try:
+            result = core.run_job(
+                job,
+                on_progress=on_progress,
+                on_log=on_log,
+                stop_event=self._stop_flag,      # bekleme Durdur'a anında yanıt versin
+            )
+        except Exception as exc:  # noqa: BLE001 - arayüz asılı kalmasın
+            self._queue.put(("log", ("error", f"Beklenmeyen hata: {exc}")))
+            result = {"total": 0, "sent": 0, "failed": 0, "stopped": True}
         self._queue.put(("done", result))
 
     def _stop(self):
         self._stop_flag.set()
         self.btn_stop.configure(state="disabled")
-        self._log("info", "Durdurma istendi, mevcut mail bitince duracak...")
+        self._log("info", "Durdurma istendi, mevcut işlem bitince duracak...")
 
     # ---------------------------------------------------------------- kuyruk
     def _drain_queue(self):
+        """Worker mesajlarını TOPLU işler.
+
+        Her mesaj için ayrı ayrı Text'e yazmak yerine satırlar biriktirilip tek
+        insert ile eklenir; ilerleme çubuğu da yalnızca son değerle güncellenir.
+        Böylece saniyede yüzlerce mesaj gelse bile arayüz akıcı kalır.
+        """
+        lines = []
+        progress = None
+        scan = None
+        finals = []
         try:
-            while True:
+            for _ in range(2000):                      # tek turda üst sınır
                 kind, payload = self._queue.get_nowait()
                 if kind == "progress":
-                    done, total, ok, fail = payload
-                    self.progress["maximum"] = max(total, 1)
-                    self.progress["value"] = done
-                    self.lbl_count.configure(text=f"{done} / {total}  (✓{ok} ✗{fail})")
+                    progress = payload                 # sıkıştır: yalnızca sonuncusu
+                elif kind == "scan":
+                    scan = payload
                 elif kind == "log":
-                    self._log(payload[0], payload[1])
-                elif kind == "done":
-                    self._on_done(payload)
+                    lines.append(payload)
+                else:
+                    finals.append((kind, payload))
         except queue.Empty:
             pass
+
+        if lines:
+            self._log_many(lines)
+        if progress is not None:
+            done, total, ok, fail = progress
+            self.progress["maximum"] = max(total, 1)
+            self.progress["value"] = done
+            self.lbl_count.configure(text=f"{done} / {total}  (✓{ok} ✗{fail})")
+        elif scan is not None:
+            done, total = scan
+            self.progress["maximum"] = max(total, 1)
+            self.progress["value"] = done
+            self.lbl_count.configure(text=f"Kontrol: {done} / {total}")
+        for kind, payload in finals:
+            if kind == "done":
+                self._on_done(payload)
+            elif kind == "check_done":
+                self._show_check_report(*payload)
+            elif kind == "check_error":
+                self.btn_check.configure(state="normal")
+                self.btn_start.configure(state="normal")
+                self.btn_stop.configure(state="disabled")
+                messagebox.showerror(APP_TITLE, f"Kontrol sırasında hata:\n{payload}")
+
         self.after(120, self._drain_queue)
 
     def _on_done(self, result):
+        self.btn_check.configure(state="normal")
         self.btn_start.configure(state="normal")
         self.btn_stop.configure(state="disabled")
         msg = (f"Tamamlandı.\n\nGönderilen: {result['sent']}\n"
@@ -486,8 +558,29 @@ class App(tk.Tk):
         messagebox.showinfo(APP_TITLE, msg)
 
     def _log(self, level, msg):
+        self._log_many([(level, msg)])
+
+    def _log_many(self, lines):
+        """Birden çok log satırını tek seferde ekler ve toplam satırı sınırlar."""
+        if not lines:
+            return
         self.txt_log.configure(state="normal")
-        self.txt_log.insert("end", msg + "\n", level)
+        # Aynı renk (tag) ardışık satırları tek insert'te birleştir.
+        buf_level, buf = lines[0][0], []
+        for level, msg in lines:
+            if level != buf_level and buf:
+                self.txt_log.insert("end", "".join(buf), buf_level)
+                buf = []
+            buf_level = level
+            buf.append(msg + "\n")
+        if buf:
+            self.txt_log.insert("end", "".join(buf), buf_level)
+
+        # Text widget'ı sınırsız büyürse kaydırma ve çizim yavaşlar.
+        extra = int(self.txt_log.index("end-1c").split(".")[0]) - LOG_MAX_LINES
+        if extra > 0:
+            self.txt_log.delete("1.0", f"{extra + 1}.0")
+
         self.txt_log.see("end")
         self.txt_log.configure(state="disabled")
 
