@@ -26,6 +26,22 @@ const POLL_SLOW = 400;        // sessizken çekme aralığı (ms)
 let running = false;          // gönderim/kontrol sürüyor mu
 let headers = [];             // mevcut sayfanın başlık listesi
 
+/* Köprü hazır olmadan da çağrılabilen API vekili.
+   Editör, pencere açılır açılmaz kurulur; köprü birkaç yüz ms sonra gelir.
+   Vekil sayesinde editörün kodunda "hazır mı" kontrolü dolaşmaz. */
+const api = new Proxy({}, {
+  get(_t, ad) {
+    return (...args) => {
+      const a = window.pywebview && window.pywebview.api;
+      if (!a || typeof a[ad] !== "function") {
+        return Promise.reject(new Error("Python köprüsü henüz hazır değil"));
+      }
+      try { return Promise.resolve(a[ad](...args)); }
+      catch (e) { return Promise.reject(e); }
+    };
+  },
+});
+
 /* ---- Excel sütun harfi: 0->A, 1->B ... ---- */
 function colLetter(i) {
   let s = ""; i += 1;
@@ -162,12 +178,16 @@ function setBusy(busy, label) {
   $("btn-stop").disabled = !busy;
 }
 
+/* Ek sütunu seçilmediğini belirten değer (core.NO_ATTACH_COL ile aynı). */
+const EK_YOK = -1;
+
 /* ---- Sütun/sayfa açılır listelerini doldur ---- */
 function fillColumns(hdrs) {
   headers = hdrs || [];
   const opts = headers.map((h, i) => `<option value="${i}">${colLetter(i)} — ${esc(h || "(boş)")}</option>`).join("");
   $("email-col").innerHTML = opts;
-  $("attach-col").innerHTML = opts;
+  // Ek isteğe bağlıdır: listenin başına "ek yok" seçeneği konur.
+  $("attach-col").innerHTML = `<option value="${EK_YOK}">— Ek gönderme —</option>` + opts;
 }
 function fillSheets(sheets, selected) {
   $("sheet").innerHTML = (sheets || []).map((s) => `<option value="${esc(s)}">${esc(s)}</option>`).join("");
@@ -180,9 +200,9 @@ function collectJob() {
     xlsx: $("xlsx").value.trim(),
     sheet: $("sheet").value,
     email_col: parseInt($("email-col").value, 10),
-    attach_col: parseInt($("attach-col").value, 10),
+    attach_col: parseInt($("attach-col").value, 10),   // -1 = ek gönderme
     subject: $("subject").value,
-    body: $("body").value,
+    body: MailEditor.getValue(),
     is_html: $("is-html").checked,
     method: currentMethod(),
     sender: $("sender").value.trim(),
@@ -206,8 +226,9 @@ function applySettings(d) {
   if (!d) return null;
   $("xlsx").value = d.xlsx || "";
   $("subject").value = d.subject || "";
-  $("body").value = d.body || "";
-  $("is-html").checked = !!d.is_html;
+  $("is-html").checked = d.is_html !== false;      // varsayılan: HTML
+  MailEditor.setHtmlMode($("is-html").checked);
+  MailEditor.setValue(d.body || "");
   $("sender").value = d.sender || "";
   $("smtp-host").value = d.smtp_host || "";
   $("smtp-port").value = d.smtp_port || "587";
@@ -324,8 +345,18 @@ function applyFinal(f) {
 function renderCheckReport(rep) {
   if (!rep) return;
   if (rep.stopped) logLine("info", "Kontrol kullanıcı tarafından durduruldu (kısmi sonuç).");
-  logLine("info", `Toplam satır: ${rep.total}  |  Sorunsuz: ${rep.ok}`);
-  logLine("info", `Geçersiz e-posta: ${rep.bad_email.length}  |  Ek boş: ${rep.empty_attach.length}  |  Ek bulunamadı: ${rep.missing_attach.length}  |  Tekrarlı ek: ${rep.duplicate_attach.length}`);
+  logLine("info", `Toplam satır: ${rep.total}  |  Gönderilebilir: ${rep.ok}`);
+  if (rep.attach_used === false)
+    logLine("info", "Ek sütunu seçilmedi — mailler eksiz gönderilecek.");
+  else
+    logLine("info", `Geçersiz e-posta: ${rep.bad_email.length}  |  Eki olmayan: ${rep.empty_attach.length}  |  Ek bulunamadı: ${rep.missing_attach.length}  |  Tekrarlı ek: ${rep.duplicate_attach.length}`);
+
+  const bosAlan = rep.empty_field || [];
+  const bilinmeyen = rep.unknown_fields || [];
+  if (rep.used_fields && rep.used_fields.length)
+    logLine("info", `Kişiselleştirme: ${rep.used_fields.length} alan kullanılıyor → ${rep.used_fields.join(", ")}`);
+  if (bilinmeyen.length)
+    logLine("error", `— Tanınmayan alan (${bilinmeyen.length}): ${bilinmeyen.map((x) => "{" + x + "}").join(", ")}  ← bu adda sütun yok, metinde olduğu gibi kalır`);
 
   const dump = (title, items, level) => {
     if (!items.length) return;
@@ -338,15 +369,20 @@ function renderCheckReport(rep) {
     if (items.length > shown) logLine(level, `    ... ve ${items.length - shown} satır daha (tam liste CSV'de)`);
   };
   dump("Geçersiz e-posta", rep.bad_email, "error");
-  dump("Ek yolu boş", rep.empty_attach, "error");
+  // Ek isteğe bağlıdır: eksiz satır gönderimi ENGELLEMEZ, bu yüzden bilgi satırı.
+  dump("Eki olmayan satır (eksiz gönderilecek)", rep.empty_attach, "info");
   dump("Ek dosyası bulunamadı", rep.missing_attach, "error");
   dump("Tekrarlı ek", rep.duplicate_attach, "info");
+  dump("Yer tutucu değeri boş", bosAlan, "info");
   if (rep.csv) logLine("info", "Sorun listesi kaydedildi: " + rep.csv);
 
   setProgress(1, `${rep.total} satır tarandı`);
-  const problems = rep.bad_email.length + rep.empty_attach.length + rep.missing_attach.length;
-  if (problems === 0) toast(`✔ Her şey yolunda — ${rep.total} satırın tamamı geçerli.`, "success", 5000);
-  else toast(`${problems} sorunlu satır bulundu. Ayrıntılar log alanında.`, "error", 5000);
+  // Yalnızca gönderimi engelleyenler "sorun" sayılır.
+  const problems = rep.bad_email.length + rep.missing_attach.length + bilinmeyen.length;
+  const notlar = bosAlan.length + rep.empty_attach.length;
+  if (problems === 0 && !notlar) toast(`✔ Her şey yolunda — ${rep.total} satırın tamamı geçerli.`, "success", 5000);
+  else if (problems === 0) toast(`✔ Gönderime engel yok — ${notlar} satır için not var, log alanına bakın.`, "info", 5000);
+  else toast(`${problems} sorun bulundu. Ayrıntılar log alanında.`, "error", 5000);
 }
 
 /* ===================================================================
@@ -373,8 +409,13 @@ async function readColumns(keepSel) {
     // Kayıtlı seçim varsa uygula, yoksa akıllı tahmin
     if (emailSel != null && !isNaN(emailSel) && emailSel < res.headers.length) $("email-col").value = emailSel;
     else guessColumn("email-col", ["email", "e-posta", "mail", "adres"]);
+    // Ek sütunu: kayıtlı seçim (-1 "ek yok" dahil) korunur; yoksa tahmin edilir.
+    // Tahmin tutmazsa "ek gönderme"de kalır — rastgele bir sütunu ek yolu sanıp
+    // her maile yanlış dosya iliştirmektense eksiz göndermek doğrudur.
     if (attachSel != null && !isNaN(attachSel) && attachSel < res.headers.length) $("attach-col").value = attachSel;
-    else guessColumn("attach-col", ["ek", "attach", "dosya", "pdf", "yol", "path", "fatura"]);
+    else if (!guessColumn("attach-col", ["ek", "attach", "dosya", "pdf", "yol", "path", "fatura"]))
+      $("attach-col").value = EK_YOK;
+    refreshEditorFields();
   } finally {
     readingColumns = false;
     if (!running) { s.className = "status-badge"; s.innerHTML = '<span class="dot"></span> Hazır'; }
@@ -382,11 +423,45 @@ async function readColumns(keepSel) {
   }
 }
 
+/* Editöre sütun listesini ve ilk satırın örnek değerlerini verir.
+   Böylece "Alan Ekle" menüsü gerçek sütunları, rozetler de gerçek değerleri
+   gösterir ({Ad Soyad} rozetinin üstüne gelince "→ Ahmet Yılmaz" yazar). */
+async function refreshEditorFields() {
+  try {
+    const res = await api.alanlar(collectJob());
+    MailEditor.setFields(res);
+  } catch (e) { /* köprü yoksa sessiz geç */ }
+  try {
+    const s = await api.ornek_satirlar(collectJob(), 1);
+    MailEditor.setSample(s && s.rows && s.rows.length ? s.rows[0].values : null);
+  } catch (e) {}
+}
+
+/* Türkçe başlıkları karşılaştırılabilir hale getirir: "Ek Dosyası" -> "ek dosyasi" */
+function normBaslik(s) {
+  return String(s || "").toLowerCase()
+    .replace(/ı/g, "i").replace(/ş/g, "s").replace(/ğ/g, "g")
+    .replace(/ü/g, "u").replace(/ö/g, "o").replace(/ç/g, "c")
+    .replace(/\s+/g, " ").trim();
+}
+
+/* Başlıklarda anahtar kelime arar. Bulduysa seçer ve true döner.
+   Sıra ÖNEMLİ: önce tam eşleşme, sonra kelime eşleşmesi, en son içerme.
+   Aksi halde "Fatura No" başlığı, 'fatura' anahtarı yüzünden asıl "Ek"
+   sütunundan önce seçiliyor ve fatura NUMARASI dosya yolu sanılıyordu. */
 function guessColumn(selId, keywords) {
-  for (let i = 0; i < headers.length; i++) {
-    const h = (headers[i] || "").toLowerCase();
-    if (keywords.some((k) => h.includes(k))) { $(selId).value = i; return; }
+  const hn = headers.map(normBaslik);
+  const kn = keywords.map(normBaslik);
+  const sec = (i) => { $(selId).value = i; return true; };
+
+  for (const k of kn) { const i = hn.indexOf(k); if (i >= 0) return sec(i); }
+  for (const k of kn) {
+    const re = new RegExp("(^|[^a-z0-9])" + k.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "([^a-z0-9]|$)");
+    const i = hn.findIndex((h) => re.test(h));
+    if (i >= 0) return sec(i);
   }
+  for (const k of kn) { const i = hn.findIndex((h) => h.indexOf(k) >= 0); if (i >= 0) return sec(i); }
+  return false;
 }
 
 async function saveSettings() {
@@ -397,6 +472,14 @@ async function saveSettings() {
    Olay bağlama
    =================================================================== */
 function wire() {
+  // Editör köprüden ÖNCE kurulur: pencere ilk kareden itibaren dolu görünür.
+  MailEditor.mount($("editor-mount"), {
+    api: api,
+    getJob: collectJob,
+    onToast: toast,
+    onChange: () => {},
+  });
+
   $("btn-browse").onclick = async () => {
     const p = await window.pywebview.api.sec_dosya();
     if (p) { $("xlsx").value = p; $("sheet").innerHTML = ""; await readColumns(null); }
@@ -408,17 +491,8 @@ function wire() {
     b.onclick = () => selectMethod(b.dataset.method);
   });
 
-  $("btn-load-html").onclick = async () => {
-    const res = await window.pywebview.api.html_yukle();
-    if (res.error) { toast(res.error, "error"); return; }
-    if (res.content != null) { $("body").value = res.content; $("is-html").checked = true; toast("HTML içerik yüklendi.", "success"); }
-  };
-  $("btn-preview").onclick = async () => {
-    const body = $("body").value;
-    if (!body.trim()) { toast("Önizlenecek içerik yok.", "error"); return; }
-    const res = await window.pywebview.api.onizle(body, $("is-html").checked);
-    if (res && res.error) toast(res.error, "error");
-  };
+  $("is-html").onchange = () => MailEditor.setHtmlMode($("is-html").checked);
+  $("btn-subject-field").onclick = (e) => MailEditor.openFields(e.currentTarget, "subject");
 
   $("btn-clear-log").onclick = clearLog;
 
@@ -440,7 +514,15 @@ function wire() {
     if (problems && problems.length) { toast("Eksik/hatalı ayarlar: " + problems.join(", "), "error", 6000); return; }
     const n = job.limit ? String(job.limit) : "TÜMÜ";
     const mode = job.test ? `TEST → ${job.test}` : "GERÇEK gönderim";
-    const ok = await confirmModal("Gönderimi başlat", `${mode}\nYöntem: ${job.method}\nGönderen: ${job.sender}\nKonu: ${job.subject}\nGönderilecek: ${n}`, "Başlat");
+    // Ek isteğe bağlı olduğu için onay kutusunda açıkça yazılır: kullanıcı
+    // "ek gönderme" seçtiğini fark etmeden 1300 mail atmasın.
+    const ekBilgi = job.attach_col >= 0
+      ? `${colLetter(job.attach_col)} sütunundaki dosya`
+      : "yok (eksiz gönderilecek)";
+    const ok = await confirmModal(
+      "Gönderimi başlat",
+      `${mode}\nYöntem: ${job.method}\nGönderen: ${job.sender}\nKonu: ${job.subject}\nEk: ${ekBilgi}\nGönderilecek: ${n}`,
+      "Başlat");
     if (!ok) return;
     await saveSettings();
     clearLog();
@@ -529,6 +611,10 @@ async function init() {
     // Excel okuma arka planda: kopuk bir ağ yolu bile arayüzü kilitlemez,
     // durum rozetinde "Excel okunuyor..." görünür.
     readColumns(saved);
+  } else {
+    // Excel yoksa bile hazır alanlar ({SATIR}, {GONDERIM_TARIHI}…) ve
+    // biçim listesi editöre gitsin.
+    refreshEditorFields();
   }
 }
 

@@ -6,6 +6,7 @@
   <meta name="theme-color" content="#007AFF" />
   <title>Toplu Fatura Mail Gönderici</title>
   <link rel="stylesheet" href="theme.css" />
+  <link rel="stylesheet" href="editor.css" />
 </head>
 <body>
   <!-- Açılış perdesi: HTML ayrıştırılır ayrıştırılmaz görünür. Pencere hiçbir
@@ -60,7 +61,7 @@
           <select id="email-col"></select>
         </div>
         <div class="field">
-          <span class="field-label">Ek (dosya yolu) sütunu</span>
+          <span class="field-label">Ek (dosya yolu) sütunu <span class="hint">(isteğe bağlı)</span></span>
           <select id="attach-col"></select>
         </div>
       </div>
@@ -100,28 +101,26 @@
       <div class="card-label" style="justify-content:space-between">
         <span style="display:flex;align-items:center;gap:9px"><span class="num">4</span> Mail içeriği</span>
         <label class="check">
-          <input type="checkbox" id="is-html" />
+          <!-- Öntanımlı İŞARETLİ: editör de HTML kipinde açılır. İkisi
+               ayrışırsa gövde HTML üretilip düz metin olarak gönderilir. -->
+          <input type="checkbox" id="is-html" checked />
           <span class="box"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg></span>
           İçerik HTML
         </label>
       </div>
       <div class="field" style="margin-bottom:12px">
-        <span class="field-label">Konu</span>
-        <input type="text" id="subject" placeholder="Örn. Şubat 2026 dönemi faturanız" />
+        <span class="field-label">Konu <span class="hint">({Sütun} yazarak kişiselleştirebilirsiniz)</span></span>
+        <div class="row" style="gap:8px;flex-wrap:nowrap">
+          <input type="text" id="subject" placeholder="Örn. {Fatura No} numaralı faturanız" style="flex:1" />
+          <button class="btn btn-ghost btn-sm" id="btn-subject-field" title="Konuya Excel sütunu ekle">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H6a2 2 0 00-2 2v4l-2 3 2 3v4a2 2 0 002 2h2M16 3h2a2 2 0 012 2v4l2 3-2 3v4a2 2 0 01-2 2h-2"/></svg>
+            Alan
+          </button>
+        </div>
       </div>
       <div class="field">
         <span class="field-label">İçerik</span>
-        <textarea id="body" placeholder="Mail gövdesi..."></textarea>
-      </div>
-      <div class="row" style="margin-top:12px">
-        <button class="btn btn-ghost btn-sm" id="btn-load-html">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 17v2a2 2 0 002 2h12a2 2 0 002-2v-2"/></svg>
-          HTML dosyasından yükle
-        </button>
-        <button class="btn btn-ghost btn-sm" id="btn-preview">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7z"/><circle cx="12" cy="12" r="3"/></svg>
-          Tarayıcıda önizle
-        </button>
+        <div id="editor-mount"></div>
       </div>
     </div>
 
@@ -191,6 +190,7 @@
     </div>
   </div>
 
+  <script src="editor.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

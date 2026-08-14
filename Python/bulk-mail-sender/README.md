@@ -12,8 +12,15 @@ yapabilirsiniz.
 
 - 📄 **Excel'den okuma** — E-posta ve ek yolu sütunlarını arayüzden seçersiniz (otomatik tahmin eder).
 - ✉️ **İki gönderim yöntemi** — Outlook masaüstü **veya** SMTP (TLS/SSL/şifresiz).
-- 🧩 **Sabit konu + içerik** — her maile aynı başlık/gövde, satıra özel ek eklenir.
-- 🖋️ **Düz metin veya HTML gövde** — "İçerik HTML" kutusu; HTML'i dosyadan yükleyip tarayıcıda önizleyebilirsiniz.
+- 🧩 **Kişiselleştirme** — konu ve içerikte `{Sütun Adı}` yazarsınız, her maile o satırın
+  değeri girer: *"Sayın Ahmet Yılmaz, 1.234,50 TL tutarındaki FTR-2026-001 numaralı faturanız…"*
+- 📎 **Ek isteğe bağlı** — ek sütunu seçmeden de gönderebilirsiniz (duyuru/bilgilendirme
+  maili); seçtiğinizde bazı satırların ek hücresi boş kalabilir, onlar eksiz gider.
+- 🖋️ **Profesyonel HTML editörü** — tasarım (WYSIWYG) + renklendirilmiş kaynak kodu +
+  bölünmüş görünüm, tablo/resim/bağlantı ekleme, Word temizleme, e-posta uyumluluk denetimi.
+- 👁️ **Gerçek veriyle önizleme** — göndermeden önce her satırın mailini olduğu gibi görün.
+- 🖼️ **Gövdeye gömülü resim** — eklediğiniz resimler maile gömülür (`cid:`), alıcı
+  "resimleri göster" demeden görünür.
 - 🧪 **Test modu** — tüm mailleri tek bir deneme adresine yönlendirip önce kendinize gönderin.
 - 🔢 **Adet sınırı & başlangıç satırı** — önce 3 mail deneyin, sonra tümünü gönderin.
 - ⏱️ **Hız sınırı** — mailler arasında bekleme süresi (sunucu limitlerine takılmamak için).
@@ -45,6 +52,120 @@ Uygulama büyük listelerde (1000+ satır) donmayacak şekilde tasarlandı:
 > **Not:** "Mailler arası bekleme" iki mailin *başlangıcı* arasındaki en az süredir.
 > 1 sn'lik ayarda gönderimin kendisi 0,8 sn sürdüyse yalnızca 0,2 sn beklenir; sunucu
 > hız sınırına uyulur ama boşa zaman harcanmaz.
+
+## Kişiselleştirme — `{Sütun Adı}`
+
+Konu ve içerikte süslü parantez içine bir **Excel sütun başlığı** yazın; gönderim
+sırasında o satırın değeriyle değişir.
+
+```
+Konu   : {Fatura No} numaralı faturanız
+İçerik : Sayın {Ad Soyad}, {Tutar:para} TL tutarındaki faturanız ektedir.
+```
+
+Editörde **Alan Ekle** düğmesi sütunlarınızı listeler (yanında ilk satırdaki örnek
+değerle birlikte); tıklayınca imlecin olduğu yere ekler. Eklenen alanlar mavi bir
+rozet olarak görünür, üzerine gelince o satırdaki değeri yazar.
+
+### Yazım kuralları
+
+| Yazım | Anlamı |
+|---|---|
+| `{Ad Soyad}` | Sütunun değeri |
+| `{Ad Soyad\|Değerli Müşterimiz}` | Değer **boşsa** yazılacak metin (varsayılan) |
+| `{Tutar:para}` | Biçimlendirilmiş değer |
+| `{Tutar:para\|0,00}` | Biçim + varsayılan birlikte |
+
+- Sütun adı **büyük/küçük harf ve boşluk farkı gözetmeden** eşleşir: `Fatura No`,
+  `fatura no`, `FATURA NO` aynı alandır. Türkçe I/İ/ı/i ayrımı da normalleştirilir.
+- **Tanınmayan bir ad asla değiştirilmez**, metinde olduğu gibi kalır. Bu kural
+  bilinçlidir: HTML'deki CSS blokları (`p { margin:0 }`) da süslü parantez içerir ve
+  bozulmamalıdır. `<style>` ve `<script>` blokları hiç taranmaz.
+- HTML gövdede değerler **kaçışlanır** (`&`, `<`, `>` → `&amp;` …), satır sonları
+  `<br />` olur. Bir hücrede HTML varsa ve olduğu gibi gömülsün istiyorsanız `:ham`
+  biçimini kullanın.
+
+### Biçimler
+
+`buyuk` · `kucuk` · `baslik` (Her Kelime Büyük) · `para` (1.234,50) · `sayi` ·
+`tamsayi` · `tarih` (01.02.2026) · `tarihsaat` · `saat` · `gun` (Pazartesi) ·
+`ay` (Şubat) · `yil` · `kirp` · `tekhane` · `ham`
+
+`%` ile başlayan bir biçim doğrudan tarih kalıbı sayılır: `{Tarih:%d %B %Y}` →
+`01 Temmuz 2026` (ay ve gün adları Türkçe yazılır).
+
+### Hazır alanlar
+
+Excel'de olmayan, program tarafından üretilen alanlar:
+`{SATIR}` · `{EPOSTA}` · `{EK}` · `{EK_ADI}` · `{EK_ADI_SADE}` ·
+`{GONDERIM_TARIHI}` · `{GONDERIM_SAATI}` · `{GONDERIM_GUNU}` · `{AY}` · `{YIL}` ·
+`{GONDEREN}`
+
+> **Öncelik:** Aynı ada sahip bir Excel sütunu varsa **o kazanır**. Fatura
+> listelerinde `Tarih` sütunu bulunmak çok olağandır; `{TARIH}` o sütunun değerini
+> verir. Gönderim anının tarihi her zaman `{GONDERIM_TARIHI}` ile alınır.
+
+### Kontrol Et ne söyler?
+
+**Kontrol Et** taraması, yer tutucular için de rapor verir:
+
+- **Tanınmayan alan** — o adda sütun yok, mailde `{Yok Boyle}` diye görünecek.
+- **Değeri boş satırlar** — alan var ama o satırda hücre boş; mailde boşluk kalır.
+  (`{Ad|Sayın Müşterimiz}` yazdıysanız uyarı verilmez.)
+
+Tam liste, diğer sorunlarla birlikte `kontrol_sorunlari.csv` dosyasına yazılır.
+
+## HTML editörü
+
+**İçerik** alanı, e-posta için tasarlanmış tam bir HTML editörüdür.
+
+### Görünümler
+
+| Görünüm | Ne işe yarar |
+|---|---|
+| **Tasarım** | Yazdığınızı gördüğünüz düzenleme (WYSIWYG) |
+| **Kod** | Renklendirilmiş HTML kaynağı, satır numaralı |
+| **Bölünmüş** | İkisi yan yana; kodda yazdıkça tasarım güncellenir |
+
+Alt kenardan sürükleyerek editörü büyütebilir, **Tam ekran** (Ctrl+Shift+F) ile
+pencerenin tamamına yayabilirsiniz.
+
+### Araç çubuğu
+
+Geri al/yinele · paragraf biçimi (başlık, alıntı, kod) · yazı tipi (yalnızca
+e-posta güvenli fontlar) · punto · kalın/italik/altı çizili/üstü çizili · yazı ve
+vurgu rengi · hizalama · listeler · girinti · bağlantı (Ctrl+K) · resim · tablo ·
+yatay çizgi · biçim temizleme.
+
+### Özel düğmeler
+
+- **Alan Ekle** — Excel sütunlarını ve hazır alanları listeler, biçim seçtirir.
+- **Önizle** — Gerçek satır verisiyle üretilmiş maili gösterir; ◀ ▶ ile satırlar
+  arasında gezinir, konu/alıcı/ek bilgisini ve mobil görünümü de verir.
+  **Üretimi gönderimle aynı kod yapar**, yani burada gördüğünüz metin gidecek metindir.
+- **Denetle** — E-posta istemcilerinde sorun çıkaracak şeyleri listeler:
+  `<script>`, `flex`/`grid`, `position:absolute`, arka plan resmi, `vh/vw`,
+  dışarıdan resim, alt metni eksikliği, 102 KB üstü boyut (Gmail maili kırpar) ve
+  tanınmayan yer tutucular.
+- **Biçimlendir** — HTML'i okunur şekilde girintiler. İçeriği değiştirmez;
+  `<style>`, `<script>` ve `<pre>` bloklarına dokunmaz.
+- **Word Temizle** — Word'den gelen HTML'deki `mso-*` bildirimlerini, `class=Mso…`
+  özniteliklerini, koşullu yorumları ve `<o:p>` etiketlerini siler. Word'den
+  **yapıştırdığınızda bu temizlik kendiliğinden** yapılır.
+- **Şablon** — İçeriği adlandırıp kaydedin, sonra tek tıkla geri yükleyin
+  (`%APPDATA%\TopluFaturaMailer\sablonlar`). Birkaç hazır şablon da vardır.
+- **İçe/dışa aktarma** — HTML dosyasından yükleyin ya da dosyaya kaydedin.
+
+### Resimler
+
+Araç çubuğundaki resim düğmesiyle (veya panodan yapıştırıp sürükleyip bırakarak)
+eklediğiniz resimler gövdeye gömülür. Gönderim sırasında bunlar otomatik olarak
+**`cid:` gömülü parçaya** dönüştürülür — Gmail ve Outlook `data:` URI'li resimleri
+göstermez, `cid:` ise her istemcide görünür. Aynı resim 1300 mailde de geçse yalnızca
+bir kez okunur.
+
+HTML mailler ayrıca okunabilir bir **düz metin alternatifiyle** gönderilir; bu hem
+kibarlıktır hem de spam puanını düşürür.
 
 ## Kurulum
 
@@ -110,31 +231,39 @@ masaüstüne kısayol oluşturabilirsiniz.
 ## Kullanım adımları
 
 1. **Excel dosyası** seçin, ardından **Sütunları Oku**'ya basın.
-2. **Sayfa**, **E-posta sütunu** ve **Ek (dosya yolu) sütunu**'nu seçin.
-   (Başlıklardan otomatik tahmin edilir; gerekirse düzeltin.)
+2. **Sayfa** ve **E-posta sütunu**'nu seçin. **Ek (dosya yolu) sütunu isteğe
+   bağlıdır** — ek göndermeyecekseniz **"— Ek gönderme —"** seçili kalsın.
+   (Sütunlar başlıklardan otomatik tahmin edilir; gerekirse düzeltin.)
 3. **Gönderim yöntemi**:
    - **Outlook**: Bilgisayarınızda kurulu ve ilgili hesapla oturum açmış Outlook kullanır.
      "Gönderen adres" alanına o hesabın adresini yazın (Outlook'ta ekli olmalı).
    - **SMTP**: Sunucu, port, güvenlik, kullanıcı ve şifreyi girin.
      Yaygın ayarlar: `587 + starttls` veya `465 + ssl`.
 4. **Konu** ve **İçerik**'i yazın.
-   - İçerik HTML ise **"İçerik HTML"** kutusunu işaretleyin (Outlook'ta `HTMLBody`, SMTP'de HTML olarak gönderilir).
-   - Hazır bir HTML şablonunuz varsa **"HTML dosyasından yükle..."** ile içeri alın (kutu otomatik işaretlenir).
-   - **"Tarayıcıda önizle"** ile göndermeden önce nasıl görüneceğini kontrol edin.
+   - Kişiye özel yazmak için **Alan Ekle**'yi kullanın ya da doğrudan `{Sütun Adı}`
+     yazın (bkz. [Kişiselleştirme](#kişiselleştirme--sütun-adı)).
+   - Düz metin göndermek isterseniz **"İçerik HTML"** kutusunun işaretini kaldırın.
+   - Hazır bir HTML şablonunuz varsa editördeki içe aktarma düğmesiyle alın.
+   - **Önizle** ile göndermeden önce gerçek satır verisiyle nasıl görüneceğini kontrol edin.
 5. **Önce test edin**: "TEST adresi" alanına kendi adresinizi yazın veya "Adet sınırı"nı `1`
    yapın. Doğru göründüğünde alanları temizleyip gerçek gönderimi başlatın.
 6. **▶ Gönderimi Başlat**. İlerlemeyi log alanından izleyin; gerekirse **■ Durdur**.
 
 ## Excel biçimi
 
-İlk satır başlık kabul edilir. En az iki sütun olmalıdır:
+İlk satır başlık kabul edilir. **Zorunlu olan tek sütun e-posta adresidir.**
 
-| Email Adresi          | Ek                                              |
-|-----------------------|-------------------------------------------------|
-| info@ornek.com        | C:\...\Faturalar\Fatura 1.pdf                    |
-| destek@ornek.com      | C:\...\Faturalar\Fatura 2.pdf                    |
+| Email Adresi          | Ad Soyad     | Fatura No     | Tutar   | Ek                            |
+|-----------------------|--------------|---------------|---------|-------------------------------|
+| info@ornek.com        | Ahmet Yılmaz | FTR-2026-001  | 1234,50 | C:\...\Faturalar\Fatura 1.pdf |
+| destek@ornek.com      | Ayşe Öztürk  | FTR-2026-002  | 2469,00 | C:\...\Faturalar\Fatura 2.pdf |
 
-Ek sütunundaki yol, o satırda gönderilecek dosyanın **tam yoludur**.
+- **Ek sütunu isteğe bağlıdır.** Seçmezseniz mailler eksiz gider — duyuru,
+  bilgilendirme ya da hatırlatma maili göndermek için bu yeterlidir.
+- Ek sütunu seçtiyseniz oradaki yol, o satırda gönderilecek dosyanın **tam yoludur**.
+  Bazı satırlarda hücre **boş kalabilir**: o satırlar eksiz gönderilir, gönderim
+  durmaz. **Kontrol Et** bu satırları bilgi olarak listeler.
+- Diğer bütün sütunlar `{Sütun Adı}` ile konu ve içerikte kullanılabilir.
 
 ## Gönderim kaydı
 
@@ -158,12 +287,29 @@ program her çalıştırmada listedeki **tüm** satırları gönderir.
 
 ```
 toplu-fatura-mailer/
-├── app.py            # Tkinter grafik arayüz
+├── ui.py             # Ana arayüz (pywebview) + Python köprüsü
+├── app.py            # Eski Tkinter arayüz (yedek)
 ├── core.py           # Excel okuma + gönderim döngüsü (arayüzden bağımsız)
+├── merge.py          # {Sütun} yer tutucu motoru (bağımsız, test edilebilir)
 ├── mailer.py         # SMTP ve Outlook gönderim arka planları
+├── web/
+│   ├── index.html    # Arayüz iskeleti
+│   ├── theme.css     # yavuzyazici.com teması
+│   ├── app.js        # Arayüz mantığı
+│   ├── editor.css    # HTML editörü stilleri
+│   └── editor.js     # HTML editörü
 ├── requirements.txt
 ├── .gitignore
 └── README.md
+```
+
+Yer tutucu motoru (`merge.py`) arayüzden ve `core.py`'den bağımsızdır; tek başına
+içe aktarılıp test edilebilir:
+
+```python
+import merge
+merge.render("Sayın {Ad Soyad}, {Tutar:para} TL", {"ad soyad": "ahmet yılmaz", "tutar": 1234.5})
+# -> 'Sayın ahmet yılmaz, 1.234,50 TL'
 ```
 
 ## Lisans

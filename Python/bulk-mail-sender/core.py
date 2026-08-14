@@ -31,7 +31,12 @@ from dataclasses import dataclass
 
 import openpyxl
 
+import merge
 from mailer import make_mailer, MailerError
+
+
+# attach_col bu değerse ek sütunu seçilmemiş demektir: mailler eksiz gider.
+NO_ATTACH_COL = -1
 
 
 @dataclass
@@ -39,6 +44,7 @@ class Recipient:
     row: int          # Excel'deki satır numarası (1 tabanlı, başlık dahil)
     email: str
     attachment: str
+    cells: tuple = ()  # satırın TÜM hücreleri — {Sütun} yer tutucuları için
 
 
 @dataclass
@@ -47,7 +53,7 @@ class SendJob:
     xlsx_path: str
     sheet: str
     email_col: int          # 0 tabanlı sütun indeksi
-    attach_col: int         # 0 tabanlı sütun indeksi
+    attach_col: int         # 0 tabanlı sütun indeksi; -1 = EK YOK (isteğe bağlıdır)
     subject: str
     body: str
     is_html: bool = False
@@ -136,15 +142,20 @@ def _read_rows(xlsx_path, sheet):
     return rows
 
 
-def read_recipients(xlsx_path, sheet, email_col, attach_col):
-    """Excel'i okuyup Recipient listesi döndürür (başlık satırı hariç)."""
+def read_recipients(xlsx_path, sheet, email_col, attach_col=NO_ATTACH_COL):
+    """Excel'i okuyup Recipient listesi döndürür (başlık satırı hariç).
+
+    attach_col < 0 ise ek sütunu YOKTUR: her satır eksiz gönderilir. Ek yalnızca
+    bir seçenektir; sadece duyuru/bilgilendirme maili atmak da geçerli bir kullanımdır.
+    """
     rows = _read_rows(xlsx_path, sheet)
     recipients = []
     append = recipients.append
+    ek_var = attach_col is not None and attach_col >= 0
     for idx, row in enumerate(rows, start=2):   # 2 = ilk veri satırı
         n = len(row)
         email = row[email_col] if email_col < n else None
-        attach = row[attach_col] if attach_col < n else None
+        attach = row[attach_col] if (ek_var and attach_col < n) else None
         if email is None and attach is None:
             continue  # boş satır
         append(
@@ -152,9 +163,19 @@ def read_recipients(xlsx_path, sheet, email_col, attach_col):
                 row=idx,
                 email=str(email).strip() if email is not None else "",
                 attachment=str(attach).strip() if attach is not None else "",
+                cells=row,
             )
         )
     return recipients
+
+
+def read_header_names(xlsx_path, sheet):
+    """Yalnızca başlıkları döndürür; okunamazsa boş liste (gönderim durmasın)."""
+    try:
+        _sheets, headers = get_headers(xlsx_path, sheet or None)
+    except Exception:  # noqa: BLE001
+        return []
+    return headers
 
 
 def get_headers(xlsx_path, sheet=None):
@@ -292,6 +313,11 @@ def _exists_map(paths, should_stop=None, on_progress=None, workers=None):
     return result
 
 
+# Boş alan uyarısı köprüden JSON olarak geçtiği için sınırsız büyümesin;
+# tam liste zaten kontrol_sorunlari.csv dosyasına yazılır.
+_MAX_FIELD_PROBLEMS = 2000
+
+
 def check_job(job: SendJob, on_progress=None, should_stop=None):
     """
     Göndermeden önce tüm listeyi tarar; hiçbir mail göndermez.
@@ -302,6 +328,8 @@ def check_job(job: SendJob, on_progress=None, should_stop=None):
       - ek yolu boş olan satırlar
       - ek dosyası diskte bulunamayan satırlar
       - aynı ek dosyasının birden çok satırda kullanılması (olası kopya)
+      - konu/içerikte geçen ama Excel'de olmayan {alan} adları
+      - {alan} kullanılan ama o satırda değeri boş olan hücreler
 
     Dönen sözlük 'problems' listesinde her sorun: (row, email, tip, detay)
     on_progress(done, total) : tarama ilerlemesi (isteğe bağlı)
@@ -314,11 +342,32 @@ def check_job(job: SendJob, on_progress=None, should_stop=None):
     empty_attach = []
     missing_attach = []
     duplicate_attach = []
+    empty_field = []
+
+    # ---- {Sütun} yer tutucuları --------------------------------------------
+    mapper = merge.RowMapper(read_header_names(job.xlsx_path, job.sheet))
+    subject_tpl = merge.Template(job.subject, is_html=False)
+    body_tpl = merge.Template(job.body, is_html=job.is_html)
+    known = mapper.keys | merge.BUILTIN_KEYS
+    unknown_fields = list(dict.fromkeys(
+        subject_tpl.unknown_names(known) + body_tpl.unknown_names(known)
+    ))
+    used_fields = list(dict.fromkeys(
+        a for a in (subject_tpl.used_names() + body_tpl.used_names())
+        if merge.normalize_name(a) in known
+    ))
+    # Varsayılanı olmayan alanlar boş kalırsa mailde boşluk görünür: bunları
+    # satır satır kontrol ederiz. ({Ad|Sayın Müşterimiz} yazılmışsa sorun değil.)
+    required = (subject_tpl.required_keys(known) | body_tpl.required_keys(known)) & mapper.keys
+    required_names = {merge.normalize_name(n): n for n in used_fields}
 
     # Aynı dosya birçok satırda geçebilir; her benzersiz yolu bir kez sorgula.
     unique_paths = list(dict.fromkeys(r.attachment for r in recipients if r.attachment))
     exists = _exists_map(unique_paths, should_stop=should_stop, on_progress=on_progress)
     stopped = bool(should_stop and should_stop())
+
+    # Ek sütunu seçilmemişse "ek boş" diye bir sorun da yoktur.
+    attach_used = job.attach_col is not None and job.attach_col >= 0
 
     seen = {}
     norm_cache = {}
@@ -326,7 +375,10 @@ def check_job(job: SendJob, on_progress=None, should_stop=None):
         if not r.email or "@" not in r.email:
             bad_email.append((r.row, r.email, "gecersiz_email", r.email))
         if not r.attachment:
-            empty_attach.append((r.row, r.email, "ek_bos", ""))
+            # Ek İSTEĞE BAĞLIDIR: bu bir hata değil, bilgi notudur — satır
+            # eksiz olarak gönderilir. Sütun hiç seçilmediyse not bile düşmeyiz.
+            if attach_used:
+                empty_attach.append((r.row, r.email, "ek_bos", "eksiz gönderilecek"))
         elif not exists.get(r.attachment, True):   # tarama kesildiyse "var" say
             missing_attach.append((r.row, r.email, "ek_bulunamadi", r.attachment))
         if r.attachment:
@@ -339,8 +391,16 @@ def check_job(job: SendJob, on_progress=None, should_stop=None):
                 duplicate_attach.append((r.row, r.email, "ek_tekrar", f"satır {first} ile aynı ek"))
             else:
                 seen[key] = r.row
+        if required and len(empty_field) < _MAX_FIELD_PROBLEMS:
+            values = mapper.values(r.cells)
+            for key in required:
+                if not merge.cell_to_text(values.get(key)).strip():
+                    ad = required_names.get(key, key)
+                    empty_field.append((r.row, r.email, "alan_bos", f"{{{ad}}} değeri boş"))
 
-    ok = total - len({p[0] for p in (bad_email + empty_attach + missing_attach)})
+    # 'ok' = gönderilebilir satır sayısı. Eki olmayan satır GÖNDERİLEBİLİR,
+    # bu yüzden empty_attach buraya girmez (yalnızca gerçek engeller sayılır).
+    ok = total - len({p[0] for p in (bad_email + missing_attach)})
     return {
         "total": total,
         "ok": ok,
@@ -348,6 +408,10 @@ def check_job(job: SendJob, on_progress=None, should_stop=None):
         "empty_attach": empty_attach,
         "missing_attach": missing_attach,
         "duplicate_attach": duplicate_attach,
+        "empty_field": empty_field,
+        "unknown_fields": unknown_fields,
+        "used_fields": used_fields,
+        "attach_used": attach_used,
         "stopped": stopped,
     }
 
@@ -454,6 +518,20 @@ def run_job(job: SendJob, on_progress=None, on_log=None, should_stop=None, stop_
     if job.test_to:
         log("info", f"TEST MODU: tüm mailler '{job.test_to}' adresine gidecek.")
 
+    # ---- {Sütun} yer tutucuları -------------------------------------------
+    # Şablonlar BİR KEZ ayrıştırılır; her satırda yeniden çözümlenmez.
+    mapper = merge.RowMapper(read_header_names(job.xlsx_path, job.sheet))
+    subject_tpl = merge.Template(job.subject, is_html=False)
+    body_tpl = merge.Template(job.body, is_html=job.is_html)
+    known = mapper.keys | merge.BUILTIN_KEYS
+    used = [a for a in (subject_tpl.used_names() + body_tpl.used_names())
+            if merge.normalize_name(a) in known]
+    personalize = bool(subject_tpl.fields or body_tpl.fields)
+    if used:
+        log("info", "Kişiselleştirme açık — kullanılan alanlar: " + ", ".join(dict.fromkeys(used)))
+    for ad in dict.fromkeys(subject_tpl.unknown_names(known) + body_tpl.unknown_names(known)):
+        log("error", f"UYARI: '{{{ad}}}' diye bir sütun yok; metinde olduğu gibi kalacak.")
+
     mailer = make_mailer(
         job.method,
         host=job.smtp_host,
@@ -509,11 +587,23 @@ def run_job(job: SendJob, on_progress=None, on_log=None, should_stop=None, stop_
                 progress(i, total, ok, fail)
                 continue
 
+            # Bu satıra özel konu/içerik. Değer üretimi ucuzdur ama alan yoksa
+            # hiç uğraşmayız (1300 satırda gereksiz sözlük kurulmasın).
+            subject, body = job.subject, job.body
+            if personalize:
+                values = merge.builtin_values(
+                    row=rcp.row, email=rcp.email,
+                    attachment=rcp.attachment, sender=job.sender,
+                )
+                values.update(mapper.values(rcp.cells))
+                subject = subject_tpl.render(values)
+                body = body_tpl.render(values)
+
             try:
                 mailer.send(
                     to=to_addr,
-                    subject=job.subject,
-                    body=job.body,
+                    subject=subject,
+                    body=body,
                     attachment=rcp.attachment or None,
                     is_html=job.is_html,
                 )

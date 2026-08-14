@@ -40,6 +40,7 @@ from collections import deque
 import webview
 
 import core
+import merge
 
 
 APP_TITLE = "Toplu Fatura Mail Gönderici"
@@ -74,6 +75,94 @@ def _veri_klasoru() -> str:
 def _settings_file() -> str:
     """Ayar dosyası: %APPDATA%\\TopluFaturaMailer\\ayarlar.json (exe'nin yanında değil)."""
     return os.path.join(_veri_klasoru(), "ayarlar.json")
+
+
+def _sablon_klasoru() -> str:
+    """Kullanıcının kaydettiği HTML şablonları: %APPDATA%\\TopluFaturaMailer\\sablonlar."""
+    folder = os.path.join(_veri_klasoru(), "sablonlar")
+    try:
+        os.makedirs(folder, exist_ok=True)
+    except OSError:
+        pass
+    return folder
+
+
+def _sutun(deger, varsayilan: int) -> int:
+    """Arayüzden gelen sütun indeksini güvenle çözer.
+
+    JS tarafında seçim yapılmamışsa değer "" / null / NaN olabilir; bunların
+    hiçbiri "0. sütun" anlamına GELMEZ.
+    """
+    try:
+        n = int(deger)
+    except (TypeError, ValueError):
+        return varsayilan
+    return varsayilan if n != n else n      # NaN koruması
+
+
+def _guvenli_ad(ad: str) -> str:
+    """YENİ şablon kaydederken adı dosya adına çevirir.
+
+    Yol ayıracı, sürücü harfi ve '..' gibi parçaları eleyerek adın şablon
+    klasörünün DIŞINA çıkamamasını garanti eder.
+
+    DİKKAT: Bu yalnızca KAYDETMEK içindir. Var olan bir şablonu açarken/silerken
+    adı yeniden buradan geçirmeyin — bkz. _sablon_yolu.
+    """
+    ad = " ".join(str(ad or "").split())[:60]
+    for ch in '\\/:*?"<>|':
+        ad = ad.replace(ch, "-")
+    while ".." in ad:                  # '..' kalıntıları dosya adını çirkinleştirir
+        ad = ad.replace("..", ".")
+    return ad.strip(" .-") or "sablon"
+
+
+def _sablon_yolu(name):
+    """Listede görünen bir şablon adını GERÇEK dosya yoluna çevirir.
+
+    Adı _guvenli_ad'dan geçirmeyiz. Sebep: klasöre dışarıdan kopyalanmış
+    (ya da eski bir sürümden kalmış) dosyaların adı _guvenli_ad'ın üreteceği
+    biçimde olmayabilir. Ad yeniden temizlenirse başka bir dosya adı hesaplanır,
+    o dosya bulunamaz ve şablon arayüzden ASLA silinemez/açılamaz hale gelir.
+
+    Bunun yerine ad, klasörün gerçek içeriğiyle eşleştirilir: listede ne
+    görünüyorsa o silinebilir. Eşleşme yoksa None döner.
+    """
+    klasor = _sablon_klasoru()
+    ham = str(name or "")
+    istenen = ham.strip()
+    if not istenen:
+        return None
+    try:
+        dosyalar = [f for f in os.listdir(klasor) if f.lower().endswith(".html")]
+    except OSError:
+        return None
+
+    # Eşleştirme kademeli: önce birebir, sonra boşluk/harf farkı hoş görülür.
+    # (Windows dosya adlarının SONUNDAKİ boşlukları kendiliğinden atar; bu
+    #  yüzden diskteki ad, kaydedilen adla birebir aynı olmayabilir.)
+    kokler = [(f, os.path.splitext(f)[0]) for f in dosyalar]
+    eslesme = None
+    for aday in (
+        lambda k: k == ham,
+        lambda k: k == istenen,
+        lambda k: k.strip() == istenen,
+        lambda k: k.strip().lower() == istenen.lower(),
+    ):
+        for f, kok in kokler:
+            if aday(kok):
+                eslesme = f
+                break
+        if eslesme:
+            break
+    if eslesme is None:
+        return None
+
+    # Güvenlik ağı: çözülen yol gerçekten şablon klasörünün içinde mi?
+    yol = os.path.join(klasor, eslesme)
+    if os.path.dirname(os.path.realpath(yol)) != os.path.realpath(klasor):
+        return None
+    return yol
 
 
 # ----------------------------------------------------------------- günlük
@@ -172,7 +261,8 @@ def _write_problem_csv(job, rep) -> str:
     Dönen değer: yazılan dosyanın yolu (yazılamadıysa boş metin).
     """
     problems = (rep.get("bad_email", []) + rep.get("empty_attach", [])
-                + rep.get("missing_attach", []) + rep.get("duplicate_attach", []))
+                + rep.get("missing_attach", []) + rep.get("duplicate_attach", [])
+                + rep.get("empty_field", []))
     if not problems:
         return ""
     out = os.path.join(os.path.dirname(job.xlsx_path) or ".", "kontrol_sorunlari.csv")
@@ -305,6 +395,229 @@ class Api:
         except Exception as exc:  # noqa: BLE001
             return {"error": f"Önizleme açılamadı: {exc}"}
 
+    def resim_yukle(self):
+        """Resim seçtirir ve gövdeye gömülecek data: URI olarak döndürür.
+
+        Gönderim sırasında bu data: URI'ler otomatik olarak cid: (gömülü parça)
+        hâline gelir — bkz. mailer.extract_inline_images.
+        """
+        res = self._pencere.create_file_dialog(
+            webview.OPEN_DIALOG,
+            allow_multiple=False,
+            file_types=("Resim (*.png;*.jpg;*.jpeg;*.gif;*.webp)", "Tüm dosyalar (*.*)"),
+        )
+        if not res:
+            return {}
+        p = res[0] if isinstance(res, (list, tuple)) else res
+        try:
+            with open(p, "rb") as fh:
+                data = fh.read()
+        except OSError as exc:
+            return {"error": f"Resim okunamadı: {exc}"}
+
+        import mimetypes
+        tur = mimetypes.guess_type(p)[0] or ""
+        if not tur.startswith("image/"):
+            tur = "image/png"
+        return {
+            "uri": f"data:{tur};base64," + base64.b64encode(data).decode("ascii"),
+            "name": os.path.basename(p),
+            "size": len(data),
+        }
+
+    def html_kaydet(self, content, name="mail-sablonu.html"):
+        """İçeriği kullanıcının seçtiği bir .html dosyasına yazar."""
+        try:
+            res = self._pencere.create_file_dialog(
+                webview.SAVE_DIALOG,
+                save_filename=_guvenli_ad(name) or "mail-sablonu.html",
+                file_types=("HTML (*.html)", "Tüm dosyalar (*.*)"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            return {"error": f"Kaydetme penceresi açılamadı: {exc}"}
+        if not res:
+            return {}
+        p = res[0] if isinstance(res, (list, tuple)) else res
+        if not os.path.splitext(p)[1]:
+            p += ".html"
+        try:
+            with open(p, "w", encoding="utf-8") as fh:
+                fh.write(content or "")
+        except OSError as exc:
+            return {"error": f"Dosya yazılamadı: {exc}"}
+        return {"path": p}
+
+    # ------------------------------------------------------ yer tutucu alanlar
+    def alanlar(self, job):
+        """Editörün 'Alan Ekle' menüsünü besler.
+
+        Döner: {columns: [...], builtins: [[ad, açıklama], ...],
+                formats: [[ad, açıklama], ...], error: ""}
+        """
+        with _izle("alanlar"):
+            path = (job or {}).get("xlsx") or ""
+            columns, hata = [], ""
+            if path and os.path.isfile(path):
+                try:
+                    _sheets, headers = core.get_headers(path, (job or {}).get("sheet") or None)
+                    # Boş başlıklar ve tekrar edenler menüde işe yaramaz.
+                    gorulen = set()
+                    for h in headers:
+                        ad = str(h or "").strip()
+                        k = merge.normalize_name(ad)
+                        if not k or k in gorulen:
+                            continue
+                        gorulen.add(k)
+                        columns.append(ad)
+                except Exception as exc:  # noqa: BLE001
+                    hata = str(exc)
+            return {
+                "columns": columns,
+                "builtins": [list(b) for b in merge.BUILTINS],
+                "formats": [list(f) for f in merge.FORMATS],
+                "error": hata,
+            }
+
+    def ornek_satirlar(self, job, adet=25):
+        """Önizleme için ilk satırların okunabilir değerleri.
+
+        Editör bunlarla alan uçlarında 'Ad Soyad → Ahmet Yılmaz' ipucu gösterir;
+        gerçek üretim yine Python'da (onizleme) yapılır ki gönderilenle birebir
+        aynı olsun.
+        """
+        with _izle("ornek_satirlar"):
+            sendjob = self._build_job(job)
+            if not os.path.isfile(sendjob.xlsx_path):
+                return {"rows": [], "total": 0, "columns": []}
+            try:
+                recipients = core.read_recipients(
+                    sendjob.xlsx_path, sendjob.sheet, sendjob.email_col, sendjob.attach_col
+                )
+                headers = core.read_header_names(sendjob.xlsx_path, sendjob.sheet)
+            except Exception as exc:  # noqa: BLE001
+                return {"error": str(exc), "rows": [], "total": 0, "columns": []}
+
+            mapper = merge.RowMapper(headers)
+            rows = []
+            for r in recipients[: max(1, int(adet or 1))]:
+                degerler = mapper.values(r.cells)
+                rows.append({
+                    "row": r.row,
+                    "email": r.email,
+                    "attachment": r.attachment,
+                    "values": {ad: merge.cell_to_text(degerler.get(ad)) for ad in mapper.keys},
+                })
+            return {"rows": rows, "total": len(recipients), "columns": mapper.names}
+
+    def onizleme(self, job, index=0):
+        """Seçilen satırın verisiyle konu + gövdeyi ÜRETİLMİŞ hâlde döndürür.
+
+        Üretim gönderimle AYNI kodu kullanır (merge.Template); önizlemede
+        gördüğünüz metin, gidecek mailin metnidir.
+        """
+        with _izle("onizleme"):
+            sendjob = self._build_job(job)
+            headers, recipients = [], []
+            if os.path.isfile(sendjob.xlsx_path):
+                try:
+                    headers = core.read_header_names(sendjob.xlsx_path, sendjob.sheet)
+                    recipients = core.read_recipients(
+                        sendjob.xlsx_path, sendjob.sheet, sendjob.email_col, sendjob.attach_col
+                    )
+                except Exception:  # noqa: BLE001 - veri yoksa da önizleme açılsın
+                    recipients = []
+
+            mapper = merge.RowMapper(headers)
+            subject_tpl = merge.Template(sendjob.subject, is_html=False)
+            body_tpl = merge.Template(sendjob.body, is_html=sendjob.is_html)
+            known = mapper.keys | merge.BUILTIN_KEYS
+
+            toplam = len(recipients)
+            i = max(0, min(int(index or 0), toplam - 1)) if toplam else 0
+            if toplam:
+                rcp = recipients[i]
+                values = merge.builtin_values(
+                    row=rcp.row, email=rcp.email,
+                    attachment=rcp.attachment, sender=sendjob.sender,
+                )
+                values.update(mapper.values(rcp.cells))
+                satir, eposta, ek = rcp.row, rcp.email, rcp.attachment
+            else:
+                # Excel yoksa alanların yerine adlarını gösteririz; editör yine çalışır.
+                values = merge.builtin_values(row="?", email="ornek@musteri.com", sender=sendjob.sender)
+                values.update({k: f"«{k}»" for k in mapper.keys})
+                satir, eposta, ek = "?", "ornek@musteri.com", ""
+
+            return {
+                "subject": subject_tpl.render(values),
+                "body": body_tpl.render(values),
+                "is_html": sendjob.is_html,
+                "index": i,
+                "total": toplam,
+                "row": satir,
+                "email": eposta,
+                "attachment": ek,
+                "attachment_name": os.path.basename(ek) if ek else "",
+                "attachment_ok": bool(ek) and os.path.isfile(ek),
+                "unknown": list(dict.fromkeys(
+                    subject_tpl.unknown_names(known) + body_tpl.unknown_names(known)
+                )),
+                "used": list(dict.fromkeys(
+                    a for a in (subject_tpl.used_names() + body_tpl.used_names())
+                    if merge.normalize_name(a) in known
+                )),
+            }
+
+    # ----------------------------------------------------------------- şablonlar
+    def sablon_listesi(self):
+        """Kaydedilmiş şablon adları (yeniden eskiye)."""
+        klasor = _sablon_klasoru()
+        try:
+            dosyalar = [f for f in os.listdir(klasor) if f.lower().endswith(".html")]
+        except OSError:
+            return {"items": []}
+        items = []
+        for f in dosyalar:
+            tam = os.path.join(klasor, f)
+            try:
+                st = os.stat(tam)
+            except OSError:
+                continue
+            items.append({"name": os.path.splitext(f)[0], "time": st.st_mtime, "size": st.st_size})
+        items.sort(key=lambda d: d["time"], reverse=True)
+        return {"items": items}
+
+    def sablon_kaydet(self, name, content):
+        ad = _guvenli_ad(name)
+        yol = os.path.join(_sablon_klasoru(), ad + ".html")
+        try:
+            with open(yol, "w", encoding="utf-8") as fh:
+                fh.write(content or "")
+        except OSError as exc:
+            return {"error": f"Şablon kaydedilemedi: {exc}"}
+        return {"name": ad}
+
+    def sablon_yukle(self, name):
+        yol = _sablon_yolu(name)
+        if yol is None:
+            return {"error": f"'{name}' adlı şablon bulunamadı."}
+        try:
+            with open(yol, "r", encoding="utf-8") as fh:
+                return {"content": fh.read()}
+        except OSError as exc:
+            return {"error": f"Şablon okunamadı: {exc}"}
+
+    def sablon_sil(self, name):
+        yol = _sablon_yolu(name)
+        if yol is None:
+            return {"error": f"'{name}' adlı şablon bulunamadı."}
+        try:
+            os.remove(yol)
+        except OSError as exc:
+            return {"error": f"Şablon silinemedi: {exc}"}
+        kayit(f"şablon silindi: {os.path.basename(yol)}")
+        return {"ok": True}
+
     # ---------------------------------------------------------- iş kurma
     def _build_job(self, job):
         xlsx = (job.get("xlsx") or "").strip()
@@ -312,8 +625,11 @@ class Api:
         return core.SendJob(
             xlsx_path=xlsx,
             sheet=job.get("sheet", ""),
-            email_col=int(job.get("email_col") or 0),
-            attach_col=int(job.get("attach_col") or 0),
+            email_col=max(0, _sutun(job.get("email_col"), 0)),
+            # Ek sütunu İSTEĞE BAĞLI: seçilmemişse (boş/None/-1) ek eklenmez.
+            # DİKKAT: burada 'or 0' kullanılamaz — seçim yapılmamışken sessizce
+            # A sütununu ek yolu sanıp her maile yanlış dosya iliştirirdi.
+            attach_col=_sutun(job.get("attach_col"), core.NO_ATTACH_COL),
             subject=job.get("subject", ""),
             body=job.get("body", ""),
             is_html=bool(job.get("is_html")),
@@ -332,8 +648,9 @@ class Api:
         )
 
     def dogrula(self, job):
-        if job.get("email_col") is None or job.get("attach_col") is None:
-            return ["Lütfen e-posta ve ek sütunlarını seçin."]
+        # Yalnızca e-posta sütunu zorunludur; ek sütunu seçilmeyebilir.
+        if _sutun(job.get("email_col"), -1) < 0:
+            return ["Lütfen e-posta sütununu seçin."]
         return core.validate_job(self._build_job(job))
 
     # ---------------------------------------------------------- olay kuyruğu

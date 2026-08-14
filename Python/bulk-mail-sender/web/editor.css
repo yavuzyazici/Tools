@@ -1,0 +1,271 @@
+/* ================================================================
+   Mail HTML Editörü — yavuzyazici.com teması
+   Renk/ölçü değişkenleri theme.css'ten gelir; burada yalnızca
+   editöre özgü bileşenler tanımlıdır.
+
+   Not: Düzenleme yüzeyi bir <iframe>'dir. Mailin kendi CSS'i
+   (Word'den gelen <style> blokları dahil) uygulamanın arayüzüne
+   sızmasın diye başka bir yol yoktur.
+   ================================================================ */
+
+.ed {
+  border: 1.5px solid var(--gray-200);
+  border-radius: var(--radius-md);
+  background: var(--white);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: 0;
+}
+.ed.focus { border-color: var(--blue); box-shadow: 0 0 0 3px var(--blue-light); }
+
+/* ---- Tam ekran ---- */
+.ed.full {
+  position: fixed; inset: 12px; z-index: 250;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+}
+.ed-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 249; }
+.ed-backdrop.hidden { display: none; }
+
+/* ---- Araç çubukları ---- */
+.ed-bar {
+  display: flex; align-items: center; gap: 2px; flex-wrap: wrap;
+  padding: 5px 6px;
+  background: var(--gray-50);
+  border-bottom: 1px solid var(--gray-200);
+}
+.ed-bar + .ed-bar { background: var(--white); }
+.ed-sep { width: 1px; align-self: stretch; margin: 3px 4px; background: var(--gray-200); flex: none; }
+.ed-spacer { flex: 1 1 auto; min-width: 4px; }
+
+.ed-btn {
+  display: inline-flex; align-items: center; justify-content: center; gap: 5px;
+  height: 28px; min-width: 28px; padding: 0 5px;
+  border: none; background: transparent; border-radius: 7px;
+  color: var(--gray-700); cursor: pointer; font-family: var(--font);
+  font-size: 12.5px; font-weight: 500; white-space: nowrap;
+  transition: background-color .13s ease, color .13s ease;
+}
+.ed-btn svg { width: 15px; height: 15px; flex: none; pointer-events: none; }
+.ed-btn:hover { background: var(--gray-200); }
+.ed-btn:active { background: var(--gray-300); }
+.ed-btn.on { background: var(--blue-light); color: var(--blue); }
+.ed-btn:disabled { opacity: .35; cursor: not-allowed; background: transparent; }
+.ed-btn.txt { padding: 0 9px; }
+.ed-btn .caret { width: 9px; height: 9px; opacity: .5; }
+
+/* Yazı tipi / boyut açılır kutuları */
+.ed-select {
+  height: 28px; border: 1px solid var(--gray-200); border-radius: 7px;
+  background: var(--white); font-family: var(--font); font-size: 12px;
+  color: var(--gray-700); padding: 0 22px 0 8px; cursor: pointer; outline: none;
+  -webkit-appearance: none; appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='10' viewBox='0 0 12 12' fill='none'%3E%3Cpath d='M2 4l4 4 4-4' stroke='%23aeaeb2' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat: no-repeat; background-position: right 6px center;
+}
+.ed-select:focus { border-color: var(--blue); }
+.ed-select.w-font { width: 116px; }
+.ed-select.w-size { width: 64px; }
+.ed-select.w-block { width: 92px; }
+
+/* Mod seçici (Tasarım / Kod / Bölünmüş) */
+.ed-modes { display: inline-flex; background: var(--gray-100); border-radius: var(--radius-full); padding: 2px; gap: 2px; }
+.ed-modes button {
+  border: none; background: none; cursor: pointer; font-family: var(--font);
+  padding: 4px 11px; border-radius: var(--radius-full); font-size: 12px; font-weight: 600;
+  color: var(--gray-500); display: inline-flex; align-items: center; gap: 5px;
+  transition: background-color .13s ease, color .13s ease;
+}
+.ed-modes button svg { width: 13px; height: 13px; }
+.ed-modes button.on { background: var(--white); color: var(--blue); box-shadow: var(--shadow-sm); }
+
+/* ---- Gövde ----
+   DİKKAT: burada 'flex: 1' KULLANILMAZ. Sütun yönlü bir flex kabında
+   'flex:1' -> 'flex-basis:0' demektir ve yazdığımız height'i geçersiz kılar;
+   iframe de kendi öntanımlı 150px'ine düşer. Sabit yükseklik + 'flex:none'
+   şart. (Tam ekranda tam tersi: kalan alanı kaplaması gerekir.)
+   'resize: vertical' ile kullanıcı alt kenardan sürükleyip büyütebilir. */
+.ed-body {
+  display: flex; position: relative;
+  flex: none; height: 360px; min-height: 160px;
+  resize: vertical; overflow: hidden;
+}
+.ed.full .ed-body { flex: 1 1 auto; height: auto !important; resize: none; }
+.ed-pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; flex: 1; }
+.ed-pane.hidden { display: none; }
+.ed-body.split .ed-pane + .ed-pane { border-left: 1px solid var(--gray-200); }
+
+.ed-frame { width: 100%; height: 100%; flex: 1; border: none; display: block; background: var(--white); }
+
+/* ---- Kaynak (kod) görünümü ----
+   Vurgulama, metin kutusunun ALTINA çizilen bir <pre> ile yapılır. İkisinin
+   yazı tipi/satır yüksekliği/dolgusu BİREBİR aynı olmalıdır, yoksa harfler
+   kayar. Bu yüzden ölçüler tek bir değişkenden gelir. */
+.ed-code {
+  --code-font: ui-monospace, "Cascadia Mono", Consolas, "SF Mono", Menlo, monospace;
+  --code-size: 12.5px;
+  --code-line: 1.55;
+  --code-pad: 10px;
+  position: relative; flex: 1; min-height: 0; display: flex; background: var(--white);
+}
+.ed-gutter {
+  flex: none; width: 44px; overflow: hidden; user-select: none;
+  background: var(--gray-50); border-right: 1px solid var(--gray-200);
+  font-family: var(--code-font); font-size: var(--code-size); line-height: var(--code-line);
+  padding: var(--code-pad) 6px var(--code-pad) 0;
+  color: var(--gray-400); text-align: right; white-space: pre;
+}
+.ed-code.nowrap-off .ed-gutter { display: none; }
+
+.ed-code-wrap { position: relative; flex: 1; min-width: 0; overflow: hidden; }
+.ed-hl, .ed-src {
+  margin: 0; border: 0; outline: none;
+  font-family: var(--code-font); font-size: var(--code-size); line-height: var(--code-line);
+  padding: var(--code-pad);
+  white-space: pre; word-wrap: normal; overflow-wrap: normal; tab-size: 2;
+  letter-spacing: 0; word-spacing: 0;
+}
+.ed-code.wrap .ed-hl, .ed-code.wrap .ed-src { white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.ed-hl {
+  position: absolute; inset: 0; overflow: auto; pointer-events: none;
+  color: var(--gray-800); background: var(--white);
+}
+.ed-src {
+  position: absolute; inset: 0; overflow: auto; resize: none; width: 100%; height: 100%;
+  background: transparent; color: transparent; caret-color: var(--black);
+  -webkit-text-fill-color: transparent;
+}
+.ed-src::selection { background: rgba(0,122,255,.24); -webkit-text-fill-color: transparent; }
+/* Vurgulama kapalıyken (çok büyük belge) metin doğrudan görünür */
+.ed-code.plain .ed-hl { display: none; }
+.ed-code.plain .ed-src { color: var(--gray-800); -webkit-text-fill-color: currentColor; }
+
+/* Sözdizimi renkleri */
+.t-tag   { color: #0f62d0; }
+.t-name  { color: #0f62d0; font-weight: 600; }
+.t-attr  { color: #7a3e9d; }
+.t-val   { color: #1a7a36; }
+.t-cmt   { color: var(--gray-400); font-style: italic; }
+.t-doc   { color: var(--gray-400); }
+.t-css   { color: #a15c00; }
+.t-ph    { background: rgba(0,122,255,.14); color: #0056b3; border-radius: 3px; font-weight: 600; }
+.t-ph-bad{ background: rgba(192,22,22,.12); color: var(--red); border-radius: 3px; font-weight: 600; }
+
+/* ---- Durum çubuğu ---- */
+.ed-status {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 5px 10px; border-top: 1px solid var(--gray-200);
+  background: var(--gray-50); font-size: 11.5px; color: var(--gray-500);
+}
+.ed-status b { font-weight: 600; color: var(--gray-600); }
+.ed-status .warn { color: #a15c00; cursor: pointer; }
+.ed-status .bad { color: var(--red); cursor: pointer; }
+.ed-status .good { color: var(--green-dark); }
+.ed-status .push { margin-left: auto; }
+
+/* ---- Açılır paneller (alan menüsü, renk, tablo, şablon) ---- */
+/* Paneller <body>'ye eklenir ve 'fixed' konumlanır: editörün 'overflow:hidden'
+   kutusu onları kırpamaz (tam ekranda da, dar pencerede de tam görünürler). */
+.ed-pop {
+  position: fixed; z-index: 260; min-width: 200px;
+  /* max-width ŞART: <body> altında 'fixed' bir kutu, içeriği izin verdiği kadar
+     genişler (pencere kadar). Onsuz alan menüsü 900px'e yayılıyordu. */
+  max-width: min(380px, calc(100vw - 16px));
+  background: var(--white); border: 1.5px solid var(--gray-200); border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg); padding: 8px;
+  animation: edPopIn .13s ease;
+}
+@keyframes edPopIn { from { opacity: 0; transform: translateY(-4px); } to { opacity: 1; transform: none; } }
+.ed-pop.hidden { display: none; }
+.ed-pop-title { font-size: 11px; font-weight: 700; color: var(--gray-400); text-transform: uppercase; letter-spacing: .04em; padding: 4px 6px 6px; }
+.ed-pop-search {
+  width: 100%; height: 30px; font-size: 12.5px; font-family: var(--font);
+  border: 1.5px solid var(--gray-200); border-radius: 8px; padding: 0 9px; outline: none; margin-bottom: 6px;
+}
+.ed-pop-search:focus { border-color: var(--blue); }
+.ed-pop-list { max-height: 264px; overflow-y: auto; }
+.ed-pop-item {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 6px 8px; border: none; background: none; border-radius: 7px;
+  font-family: var(--font); font-size: 12.5px; color: var(--gray-800);
+  cursor: pointer; text-align: left;
+}
+.ed-pop-item:hover, .ed-pop-item.sel { background: var(--blue-light); color: var(--blue); }
+.ed-pop-item .nm { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ed-pop-item .ex { margin-left: auto; color: var(--gray-400); font-size: 11.5px; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ed-pop-item:hover .ex { color: var(--blue); opacity: .75; }
+.ed-pop-empty { padding: 10px 8px; font-size: 12px; color: var(--gray-400); }
+.ed-pop-note { padding: 7px 8px 3px; font-size: 11px; color: var(--gray-400); line-height: 1.5; border-top: 1px solid var(--gray-100); margin-top: 6px; }
+.ed-pop-row { display: flex; gap: 6px; align-items: center; padding: 4px 6px; }
+.ed-pop-row label { font-size: 11.5px; color: var(--gray-500); min-width: 42px; }
+.ed-pop-row input[type=text], .ed-pop-row input[type=url], .ed-pop-row select {
+  flex: 1; height: 30px; font-size: 12.5px; font-family: var(--font);
+  border: 1.5px solid var(--gray-200); border-radius: 8px; padding: 0 9px; outline: none; min-width: 0;
+}
+.ed-pop-row input:focus { border-color: var(--blue); }
+.ed-pop-actions { display: flex; gap: 6px; justify-content: flex-end; padding: 8px 6px 2px; }
+
+/* Renk paleti */
+.ed-swatches { display: grid; grid-template-columns: repeat(10, 20px); gap: 4px; padding: 4px 6px; }
+.ed-swatch { width: 20px; height: 20px; border-radius: 5px; border: 1px solid rgba(0,0,0,.12); cursor: pointer; padding: 0; }
+.ed-swatch:hover { transform: scale(1.14); }
+.ed-swatch.none { background: var(--white); position: relative; overflow: hidden; }
+.ed-swatch.none::after { content: ""; position: absolute; left: -4px; top: 9px; width: 28px; height: 1.5px; background: var(--red); transform: rotate(-45deg); }
+
+/* Tablo ızgarası */
+.ed-grid { display: grid; grid-template-columns: repeat(8, 18px); gap: 2px; padding: 6px; }
+.ed-cell { width: 18px; height: 18px; border: 1px solid var(--gray-300); border-radius: 3px; background: var(--white); cursor: pointer; padding: 0; }
+.ed-cell.on { background: var(--blue-light); border-color: var(--blue); }
+.ed-grid-label { text-align: center; font-size: 11.5px; color: var(--gray-500); padding-bottom: 4px; }
+
+/* Şablon listesi */
+.ed-tpl-item { display: flex; align-items: center; gap: 6px; }
+.ed-tpl-item .del { opacity: 0; color: var(--gray-400); border: none; background: none; cursor: pointer; padding: 2px; border-radius: 5px; display: flex; }
+.ed-tpl-item:hover .del { opacity: 1; }
+.ed-tpl-item .del:hover { background: rgba(192,22,22,.12); color: var(--red); }
+.ed-tpl-item .del svg { width: 13px; height: 13px; }
+
+/* Denetim (uyumluluk) listesi */
+.ed-lint { max-height: 260px; overflow-y: auto; }
+.ed-lint-item { display: flex; gap: 8px; padding: 7px 8px; font-size: 12px; line-height: 1.5; border-radius: 7px; }
+.ed-lint-item + .ed-lint-item { border-top: 1px solid var(--gray-100); }
+.ed-lint-item .ic { flex: none; width: 15px; height: 15px; margin-top: 1px; }
+.ed-lint-item.err .ic { color: var(--red); }
+.ed-lint-item.warn .ic { color: #a15c00; }
+.ed-lint-item.info .ic { color: var(--blue); }
+.ed-lint-item .tx b { display: block; font-weight: 600; color: var(--gray-800); }
+.ed-lint-item .tx span { color: var(--gray-500); }
+
+/* ---- Önizleme penceresi ---- */
+.ed-prev-backdrop {
+  position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 300;
+  display: flex; align-items: center; justify-content: center; padding: 20px;
+}
+.ed-prev-backdrop.hidden { display: none; }
+.ed-prev {
+  background: var(--white); border-radius: var(--radius-lg); box-shadow: var(--shadow-lg);
+  width: 100%; max-width: 860px; height: 100%; max-height: 92vh;
+  display: flex; flex-direction: column; overflow: hidden;
+  animation: toastIn .2s cubic-bezier(0.34,1.56,0.64,1);
+}
+.ed-prev-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--gray-200); }
+.ed-prev-head h3 { font-size: 15px; font-weight: 700; }
+.ed-prev-nav { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.ed-prev-nav .pos { font-size: 12px; color: var(--gray-500); font-weight: 600; min-width: 96px; text-align: center; }
+.ed-prev-meta { padding: 10px 16px; background: var(--gray-50); border-bottom: 1px solid var(--gray-200); font-size: 12.5px; display: flex; flex-direction: column; gap: 4px; }
+.ed-prev-meta .ln { display: flex; gap: 8px; }
+.ed-prev-meta .k { color: var(--gray-500); min-width: 62px; flex: none; }
+.ed-prev-meta .v { color: var(--black); font-weight: 500; overflow-wrap: anywhere; }
+.ed-prev-meta .v.bad { color: var(--red); }
+.ed-prev-body { flex: 1; min-height: 0; background: var(--gray-100); padding: 14px; overflow: auto; }
+.ed-prev-body iframe { width: 100%; height: 100%; min-height: 320px; border: 1px solid var(--gray-200); border-radius: var(--radius-sm); background: var(--white); display: block; margin: 0 auto; transition: max-width .2s ease; }
+.ed-prev-body.mobil iframe { max-width: 380px; }
+
+/* ---- Küçük ekran ---- */
+@media (max-width: 720px) {
+  .ed-select.w-font { width: 92px; }
+  .ed-body.split { flex-direction: column; }
+  .ed-body.split .ed-pane + .ed-pane { border-left: none; border-top: 1px solid var(--gray-200); }
+}
