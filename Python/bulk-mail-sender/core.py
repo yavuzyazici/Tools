@@ -23,6 +23,7 @@ Performans notları
 from __future__ import annotations
 
 import os
+import re
 import csv
 import time
 import threading
@@ -57,6 +58,10 @@ class SendJob:
     subject: str
     body: str
     is_html: bool = False
+    # CC / BCC: sabit adres(ler) ya da {Sütun} yer tutucusu; birden çok adres
+    # ';' veya ',' ile ayrılır. Boş = yok. TEST modunda hiç kullanılmaz.
+    cc: str = ""
+    bcc: str = ""
     method: str = "smtp"    # 'smtp' | 'outlook'
     sender: str = ""
     # SMTP ayarları
@@ -203,6 +208,88 @@ def get_headers(xlsx_path, sheet=None):
 
 
 # ---------------------------------------------------------------------------
+# CC / BCC adresleri
+# ---------------------------------------------------------------------------
+# Ayıraç: ; (Outlook alışkanlığı), virgül ve satır sonu (Excel hücresinde alt
+# alta yazılmış adresler).
+_ADRES_AYIRAC_RE = re.compile(r"[;,\r\n\t]+")
+# 'Ad Soyad <adres@alan.com>' yazımında yalnızca köşeli parantez içi alınır.
+_ADRES_ACILI_RE = re.compile(r"<\s*([^<>\s]+)\s*>\s*$")
+_ADRES_RE = re.compile(r'^[^@\s<>(),;:"\[\]]+@[^@\s<>(),;:"\[\]]+\.[^@\s<>(),;:"\[\].]+$')
+
+
+def parse_addresses(text, exclude=()):
+    """'a@x.com; Ad <b@y.com>, c@z.com' -> (geçerli, geçersiz) listeleri.
+
+    Tekrarlar ve 'exclude'daki adresler (ör. alıcının kendisi) büyük/küçük harf
+    gözetmeden atılır: aynı kişiye aynı mail iki kez gitmesin.
+    """
+    valid, invalid = [], []
+    seen = {str(a).strip().lower() for a in exclude if a}
+    for parca in _ADRES_AYIRAC_RE.split(text or ""):
+        parca = parca.strip()
+        if not parca:
+            continue
+        m = _ADRES_ACILI_RE.search(parca)
+        # Boşlukla ayrılmış bir liste de ('a@x.com b@y.com') kabul edilir.
+        for adres in ([m.group(1)] if m else parca.split()):
+            adres = adres.strip("'\"")
+            if not _ADRES_RE.match(adres):
+                invalid.append(parca if m else adres)
+                continue
+            if adres.lower() in seen:
+                continue
+            seen.add(adres.lower())
+            valid.append(adres)
+    return valid, invalid
+
+
+class CopyRecipients:
+    """İşin CC/BCC şablonları: bir kez ayrıştırılır, her satır için üretilir.
+
+    CC/BCC alanına sabit adres de, {Sütun} yer tutucusu da yazılabilir:
+    'muhasebe@firma.com; {Yetkili E-posta}'. Hücre boşsa o satırda CC yoktur;
+    bu bir hata değildir. Geçersiz adresler maile EKLENMEZ ve raporlanır —
+    Outlook tanımadığı tek bir adres yüzünden tüm maili reddeder.
+    """
+
+    __slots__ = ("cc_tpl", "bcc_tpl", "active")
+
+    def __init__(self, cc="", bcc=""):
+        self.cc_tpl = merge.Template((cc or "").strip(), is_html=False)
+        self.bcc_tpl = merge.Template((bcc or "").strip(), is_html=False)
+        self.active = bool(self.cc_tpl.text or self.bcc_tpl.text)
+
+    @property
+    def templates(self):
+        return (self.cc_tpl, self.bcc_tpl)
+
+    @property
+    def personal(self):
+        """Satıra göre değişiyor mu? (değişmiyorsa her satırda yeniden üretilmez)"""
+        return bool(self.cc_tpl.fields or self.bcc_tpl.fields)
+
+    def resolve(self, to="", values=None):
+        """-> (cc, bcc, geçersiz). Alıcının kendisi CC'ye, CC'dekiler BCC'ye tekrar girmez."""
+        if not self.active:
+            return [], [], []
+        values = values if values is not None else {}
+        cc, bad_cc = parse_addresses(self.cc_tpl.render(values), exclude=(to,))
+        bcc, bad_bcc = parse_addresses(self.bcc_tpl.render(values), exclude=[to] + cc)
+        return cc, bcc, bad_cc + bad_bcc
+
+
+def describe_copies(cc, bcc):
+    """Log/CSV için kısa özet: 'CC: a@x.com; BCC: b@y.com' (yoksa boş)."""
+    parcalar = []
+    if cc:
+        parcalar.append("CC: " + ", ".join(cc))
+    if bcc:
+        parcalar.append("BCC: " + ", ".join(bcc))
+    return "; ".join(parcalar)
+
+
+# ---------------------------------------------------------------------------
 # Gönderim kaydı (CSV)
 # ---------------------------------------------------------------------------
 class _ResultWriter:
@@ -272,6 +359,13 @@ def validate_job(job: SendJob):
             problems.append("SMTP sunucu adresi boş.")
         if not job.sender and not job.smtp_user:
             problems.append("Gönderen adres / SMTP kullanıcı adı boş.")
+    # Sabit yazılmış CC/BCC adresleri burada denetlenir; {Sütun} içerenler
+    # satıra göre değiştiği için Kontrol Et taramasında satır satır denetlenir.
+    for etiket, metin in (("CC", job.cc), ("BCC", job.bcc)):
+        if metin and not merge.has_fields(metin):
+            _gecerli, gecersiz = parse_addresses(metin)
+            if gecersiz:
+                problems.append(f"{etiket} adresi geçersiz: {', '.join(gecersiz)}")
     return problems
 
 
@@ -330,6 +424,7 @@ def check_job(job: SendJob, on_progress=None, should_stop=None):
       - aynı ek dosyasının birden çok satırda kullanılması (olası kopya)
       - konu/içerikte geçen ama Excel'de olmayan {alan} adları
       - {alan} kullanılan ama o satırda değeri boş olan hücreler
+      - CC/BCC'de geçersiz adres olan satırlar (o adres atlanır, mail yine gider)
 
     Dönen sözlük 'problems' listesinde her sorun: (row, email, tip, detay)
     on_progress(done, total) : tarama ilerlemesi (isteğe bağlı)
@@ -343,19 +438,22 @@ def check_job(job: SendJob, on_progress=None, should_stop=None):
     missing_attach = []
     duplicate_attach = []
     empty_field = []
+    bad_cc = []
 
     # ---- {Sütun} yer tutucuları --------------------------------------------
     mapper = merge.RowMapper(read_header_names(job.xlsx_path, job.sheet))
     subject_tpl = merge.Template(job.subject, is_html=False)
     body_tpl = merge.Template(job.body, is_html=job.is_html)
+    copies = CopyRecipients(job.cc, job.bcc)
+    tpls = (subject_tpl, body_tpl) + copies.templates
     known = mapper.keys | merge.BUILTIN_KEYS
-    unknown_fields = list(dict.fromkeys(
-        subject_tpl.unknown_names(known) + body_tpl.unknown_names(known)
-    ))
+    unknown_fields = list(dict.fromkeys(n for t in tpls for n in t.unknown_names(known)))
     used_fields = list(dict.fromkeys(
-        a for a in (subject_tpl.used_names() + body_tpl.used_names())
+        a for t in tpls for a in t.used_names()
         if merge.normalize_name(a) in known
     ))
+    # CC/BCC boş kalabilir (her satırın yetkilisi olmayabilir); bu yüzden
+    # yalnızca konu/içerik alanları 'boş değer' denetimine girer.
     # Varsayılanı olmayan alanlar boş kalırsa mailde boşluk görünür: bunları
     # satır satır kontrol ederiz. ({Ad|Sayın Müşterimiz} yazılmışsa sorun değil.)
     required = (subject_tpl.required_keys(known) | body_tpl.required_keys(known)) & mapper.keys
@@ -368,6 +466,12 @@ def check_job(job: SendJob, on_progress=None, should_stop=None):
 
     # Ek sütunu seçilmemişse "ek boş" diye bir sorun da yoktur.
     attach_used = job.attach_col is not None and job.attach_col >= 0
+
+    # Sabit CC/BCC her satırda aynıdır: bir kez denetlenir, 1300 kez raporlanmaz.
+    if copies.active and not copies.personal:
+        _cc, _bcc, gecersiz = copies.resolve()
+        if gecersiz:
+            bad_cc.append(("tümü", "", "gecersiz_cc", ", ".join(gecersiz)))
 
     seen = {}
     norm_cache = {}
@@ -397,6 +501,14 @@ def check_job(job: SendJob, on_progress=None, should_stop=None):
                 if not merge.cell_to_text(values.get(key)).strip():
                     ad = required_names.get(key, key)
                     empty_field.append((r.row, r.email, "alan_bos", f"{{{ad}}} değeri boş"))
+        if copies.personal and len(bad_cc) < _MAX_FIELD_PROBLEMS:
+            values = merge.builtin_values(
+                row=r.row, email=r.email, attachment=r.attachment, sender=job.sender,
+            )
+            values.update(mapper.values(r.cells))
+            _cc, _bcc, gecersiz = copies.resolve(r.email, values)
+            if gecersiz:
+                bad_cc.append((r.row, r.email, "gecersiz_cc", ", ".join(gecersiz)))
 
     # 'ok' = gönderilebilir satır sayısı. Eki olmayan satır GÖNDERİLEBİLİR,
     # bu yüzden empty_attach buraya girmez (yalnızca gerçek engeller sayılır).
@@ -409,6 +521,8 @@ def check_job(job: SendJob, on_progress=None, should_stop=None):
         "missing_attach": missing_attach,
         "duplicate_attach": duplicate_attach,
         "empty_field": empty_field,
+        "bad_cc": bad_cc,
+        "cc_used": copies.active,
         "unknown_fields": unknown_fields,
         "used_fields": used_fields,
         "attach_used": attach_used,
@@ -523,14 +637,23 @@ def run_job(job: SendJob, on_progress=None, on_log=None, should_stop=None, stop_
     mapper = merge.RowMapper(read_header_names(job.xlsx_path, job.sheet))
     subject_tpl = merge.Template(job.subject, is_html=False)
     body_tpl = merge.Template(job.body, is_html=job.is_html)
+    # TEST modunda CC/BCC devre dışı: "herkes yerine buraya" sözü CC'deki
+    # gerçek kişilere de mail gitmemesi demektir.
+    cc_txt, bcc_txt = (job.cc or "").strip(), (job.bcc or "").strip()
+    copies = CopyRecipients() if job.test_to else CopyRecipients(cc_txt, bcc_txt)
+    tpls = (subject_tpl, body_tpl) + copies.templates
     known = mapper.keys | merge.BUILTIN_KEYS
-    used = [a for a in (subject_tpl.used_names() + body_tpl.used_names())
-            if merge.normalize_name(a) in known]
-    personalize = bool(subject_tpl.fields or body_tpl.fields)
+    used = [a for t in tpls for a in t.used_names() if merge.normalize_name(a) in known]
+    personalize = any(t.fields for t in tpls)
     if used:
         log("info", "Kişiselleştirme açık — kullanılan alanlar: " + ", ".join(dict.fromkeys(used)))
-    for ad in dict.fromkeys(subject_tpl.unknown_names(known) + body_tpl.unknown_names(known)):
+    for ad in dict.fromkeys(n for t in tpls for n in t.unknown_names(known)):
         log("error", f"UYARI: '{{{ad}}}' diye bir sütun yok; metinde olduğu gibi kalacak.")
+    if job.test_to and (cc_txt or bcc_txt):
+        log("info", "TEST MODU: CC/BCC adresleri kullanılmayacak.")
+    elif copies.active:
+        log("info", "Kopya alıcılar — " + describe_copies(
+            [cc_txt] if cc_txt else [], [bcc_txt] if bcc_txt else []))
 
     mailer = make_mailer(
         job.method,
@@ -590,6 +713,7 @@ def run_job(job: SendJob, on_progress=None, on_log=None, should_stop=None, stop_
             # Bu satıra özel konu/içerik. Değer üretimi ucuzdur ama alan yoksa
             # hiç uğraşmayız (1300 satırda gereksiz sözlük kurulmasın).
             subject, body = job.subject, job.body
+            values = None
             if personalize:
                 values = merge.builtin_values(
                     row=rcp.row, email=rcp.email,
@@ -599,17 +723,32 @@ def run_job(job: SendJob, on_progress=None, on_log=None, should_stop=None, stop_
                 subject = subject_tpl.render(values)
                 body = body_tpl.render(values)
 
+            cc, bcc, bad_cc = copies.resolve(to_addr, values)
+            if bad_cc:
+                # Geçersiz kopya adresi atlanır; asıl alıcının faturası bekletilmez.
+                log("error", f"Satır {rcp.row}: geçersiz CC/BCC atlandı -> {', '.join(bad_cc)}")
+            kopya = describe_copies(cc, bcc)
+
             try:
-                mailer.send(
+                reddedilen = mailer.send(
                     to=to_addr,
                     subject=subject,
                     body=body,
                     attachment=rcp.attachment or None,
                     is_html=job.is_html,
+                    cc=cc,
+                    bcc=bcc,
                 )
                 ok += 1
-                log("ok", f"Satır {rcp.row}: gönderildi -> {rcp.email}")
-                results.write(rcp.row, rcp.email, "OK", "", stamp)
+                log("ok", f"Satır {rcp.row}: gönderildi -> {rcp.email}" + (f" ({kopya})" if kopya else ""))
+                detay = [kopya] if kopya else []
+                if bad_cc:
+                    detay.append("geçersiz CC/BCC atlandı: " + ", ".join(bad_cc))
+                if reddedilen:
+                    # Sunucu bazı kopya adreslerini reddetti; asıl alıcıya gitti.
+                    log("error", f"Satır {rcp.row}: sunucu reddetti -> {', '.join(reddedilen)}")
+                    detay.append("sunucu reddetti: " + ", ".join(reddedilen))
+                results.write(rcp.row, rcp.email, "OK", " | ".join(detay), stamp)
             except MailerError as exc:
                 fail += 1
                 log("error", f"Satır {rcp.row}: HATA -> {rcp.email}: {exc}")

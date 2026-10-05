@@ -988,13 +988,20 @@ window.MailEditor = (function () {
         const f = fmtSel.value;
         const raw = "{" + ad + (f ? ":" + f : "") + "}";
         closePop();
-        if (target === "subject") {
-          const inp = document.getElementById("subject");
+        if (target !== "body") {
+          // Gövde dışındaki hedefler (konu, CC, BCC) düz metin kutusudur: id ile bulunur.
+          const inp = document.getElementById(target);
           const a = inp.selectionStart != null ? inp.selectionStart : inp.value.length;
           const b = inp.selectionEnd != null ? inp.selectionEnd : a;
-          inp.value = inp.value.slice(0, a) + raw + inp.value.slice(b);
+          let ek = raw;
+          if (target === "cc" || target === "bcc") {
+            // Adres listesine eklerken ayıracı biz koyarız: "a@x.com{Yetkili}" olmasın.
+            const once = inp.value.slice(0, a).trimEnd();
+            if (once && !/[;,]$/.test(once)) ek = "; " + raw;
+          }
+          inp.value = inp.value.slice(0, a) + ek + inp.value.slice(b);
           inp.focus();
-          inp.setSelectionRange(a + raw.length, a + raw.length);
+          inp.setSelectionRange(a + ek.length, a + ek.length);
           inp.dispatchEvent(new Event("input", { bubbles: true }));
         } else {
           insertField(raw);
@@ -1375,8 +1382,17 @@ window.MailEditor = (function () {
         ? '<div class="ln"><span class="k">Uyarı</span><span class="v bad">Tanınmayan alan: ' +
           res.unknown.map((x) => "{" + esc(x) + "}").join(", ") + "</span></div>"
         : "";
+      // CC/BCC yalnızca doluysa gösterilir; TEST modunda gönderilmeyecekleri yazılır.
+      const testNotu = res.test_to ? '  <span class="bad">(TEST modunda gönderilmez)</span>' : "";
+      const kopya = (etiket, liste) => liste && liste.length
+        ? '<div class="ln"><span class="k">' + etiket + '</span><span class="v">' + esc(liste.join(", ")) + testNotu + "</span></div>"
+        : "";
+      const gecersiz = res.bad_cc && res.bad_cc.length
+        ? '<div class="ln"><span class="k">CC/BCC</span><span class="v bad">Geçersiz, atlanacak: ' + esc(res.bad_cc.join(", ")) + "</span></div>"
+        : "";
       meta.innerHTML =
         '<div class="ln"><span class="k">Kime</span><span class="v">' + esc(res.email || "—") + "</span></div>" +
+        kopya("CC", res.cc) + kopya("BCC", res.bcc) + gecersiz +
         '<div class="ln"><span class="k">Konu</span><span class="v">' + esc(res.subject || "(boş)") + "</span></div>" +
         '<div class="ln"><span class="k">Ek</span><span class="v' + (res.attachment && !res.attachment_ok ? " bad" : "") + '">' +
           (res.attachment_name ? esc(res.attachment_name) + (res.attachment_ok ? "" : "  — dosya bulunamadı!") : "yok") +

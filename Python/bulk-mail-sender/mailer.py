@@ -8,7 +8,9 @@ Gönderim arka planı (backend) modülü.
 Her iki sınıf da aynı arayüze sahiptir:
     mailer.connect()                       -> bağlantı/hazırlık (gerekirse)
     mailer.prefetch(path)                  -> eki önden okur (isteğe bağlı hızlandırma)
-    mailer.send(to, subject, body, attachment, is_html) -> tek bir mail gönderir
+    mailer.send(to, subject, body, attachment, is_html, cc, bcc)
+                                           -> tek bir mail gönderir; sunucunun
+                                              reddettiği kopya adreslerini döndürür
     mailer.close()                         -> kaynakları serbest bırakır
 
 Böylece GUI tarafı hangi yöntemin seçildiğini bilmeden aynı şekilde kullanabilir.
@@ -49,6 +51,13 @@ from email.message import EmailMessage
 
 class MailerError(Exception):
     """Gönderimle ilgili beklenen hataları tek tipte iletmek için."""
+
+
+def _metin(deger):
+    """SMTP sunucu yanıtı bayt gelir; log'a okunur metin olarak yazılsın."""
+    if isinstance(deger, bytes):
+        return deger.decode("utf-8", "replace")
+    return str(deger)
 
 
 # ---------------------------------------------------------------------------
@@ -337,10 +346,13 @@ class SmtpMailer:
             pass
 
     # ------------------------------------------------------------- gönderim
-    def _build(self, to, subject, body, attachment, is_html):
+    def _build(self, to, subject, body, attachment, is_html, cc=None):
         msg = EmailMessage()
         msg["From"] = self.sender
         msg["To"] = to
+        if cc:
+            msg["Cc"] = ", ".join(cc)
+        # BCC başlığa YAZILMAZ (yazılırsa herkes görür); yalnızca zarfa girer.
         msg["Subject"] = subject
         if is_html:
             # Gömülü resimler cid: parçalarına çevrilir (data: URI hiçbir
@@ -365,12 +377,18 @@ class SmtpMailer:
             _attach_file(msg, attachment, self.attachments)
         return msg
 
-    def send(self, to, subject, body, attachment=None, is_html=False):
+    def send(self, to, subject, body, attachment=None, is_html=False, cc=None, bcc=None):
+        """Maili gönderir. Sunucunun reddettiği CC/BCC adreslerini liste olarak döndürür.
+
+        Asıl alıcı (To) reddedildiyse bu bir hatadır (MailerError) — mail kopya
+        alıcılarına gitmiş olsa bile faturanın sahibine ulaşmamıştır.
+        """
         # Mesaj bağlantıdan önce hazırlanır: ek okunamıyorsa sunucuyu meşgul etmeyiz.
-        msg = self._build(to, subject, body, attachment, is_html)
+        msg = self._build(to, subject, body, attachment, is_html, cc)
+        alicilar = [to] + list(cc or ()) + list(bcc or ())
         self._ensure()
         try:
-            self._server.send_message(msg)
+            reddedilen = self._server.send_message(msg, to_addrs=alicilar) or {}
         except smtplib.SMTPServerDisconnected as exc:
             # Bağlantı koptu. Mesajın sunucuya ulaşıp ulaşmadığı belli olmadığından
             # OTOMATİK TEKRAR GÖNDERMİYORUZ (mükerrer fatura riski). Bağlantıyı
@@ -380,6 +398,15 @@ class SmtpMailer:
         except Exception as exc:  # noqa: BLE001
             raise MailerError(str(exc)) from exc
         self._last_ok = time.monotonic()
+        # smtplib, alıcıların EN AZ BİRİ kabul edildiyse hata vermez; reddedilenleri
+        # sözlükte döndürür. Hepsi reddedilseydi yukarıda SMTPRecipientsRefused olurdu.
+        if to in reddedilen:
+            kod, neden = reddedilen[to]
+            raise MailerError(
+                f"Alıcı adresi sunucu tarafından reddedildi ({kod}: {_metin(neden)}); "
+                "mail yalnızca CC/BCC alıcılarına gitti."
+            )
+        return list(reddedilen)
 
     # ------------------------------------------------------------- kapatma
     def _close_quietly(self):
@@ -508,12 +535,18 @@ class OutlookMailer:
                 # Resim gömülemediyse mail yine de gitsin; sadece o resim çıkmaz.
                 raise MailerError(f"Gövdedeki resim eklenemedi ({img.filename}): {exc}") from exc
 
-    def send(self, to, subject, body, attachment=None, is_html=False):
+    def send(self, to, subject, body, attachment=None, is_html=False, cc=None, bcc=None):
+        """Maili gönderir. Outlook reddedilen alıcıyı ayrıca bildirmez: tanımadığı
+        bir adres olursa Send() hata verir. Bu yüzden dönüş hep boş listedir."""
         if self._outlook is None:
             self.connect()
         try:
             mail = self._create_item(0)  # 0 = olMailItem
             mail.To = to
+            if cc:
+                mail.CC = "; ".join(cc)
+            if bcc:
+                mail.BCC = "; ".join(bcc)
             mail.Subject = subject
             if is_html:
                 # Ekler HTMLBody'den ÖNCE eklenir: Outlook cid göndermelerini
@@ -536,6 +569,7 @@ class OutlookMailer:
             raise
         except Exception as exc:  # noqa: BLE001
             raise MailerError(str(exc)) from exc
+        return []
 
     def close(self):
         # Outlook uygulaması kullanıcıya ait; kapatmıyoruz, sadece referansı bırakıyoruz.

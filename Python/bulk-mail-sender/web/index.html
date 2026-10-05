@@ -108,6 +108,30 @@
           İçerik HTML
         </label>
       </div>
+      <!-- Kopya alıcılar: sabit adres ya da {Sütun}; birden çok adres ; ile.
+           TEST modunda kullanılmaz (bkz. core.run_job). -->
+      <div class="row" style="margin-bottom:12px;align-items:flex-start">
+        <div class="field" style="min-width:260px">
+          <span class="field-label">CC <span class="hint">(isteğe bağlı — birden çok adres ; ile)</span></span>
+          <div class="row" style="gap:8px;flex-wrap:nowrap">
+            <input type="text" id="cc" placeholder="Örn. muhasebe@sirket.com; {Yetkili E-posta}" style="flex:1" />
+            <button class="btn btn-ghost btn-sm" id="btn-cc-field" title="CC'ye Excel sütunu ekle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H6a2 2 0 00-2 2v4l-2 3 2 3v4a2 2 0 002 2h2M16 3h2a2 2 0 012 2v4l2 3-2 3v4a2 2 0 01-2 2h-2"/></svg>
+              Alan
+            </button>
+          </div>
+        </div>
+        <div class="field" style="min-width:260px">
+          <span class="field-label">BCC <span class="hint">(gizli kopya — alıcı görmez)</span></span>
+          <div class="row" style="gap:8px;flex-wrap:nowrap">
+            <input type="text" id="bcc" placeholder="Örn. arsiv@sirket.com" style="flex:1" />
+            <button class="btn btn-ghost btn-sm" id="btn-bcc-field" title="BCC'ye Excel sütunu ekle">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H6a2 2 0 00-2 2v4l-2 3 2 3v4a2 2 0 002 2h2M16 3h2a2 2 0 012 2v4l2 3-2 3v4a2 2 0 01-2 2h-2"/></svg>
+              Alan
+            </button>
+          </div>
+        </div>
+      </div>
       <div class="field" style="margin-bottom:12px">
         <span class="field-label">Konu <span class="hint">({Sütun} yazarak kişiselleştirebilirsiniz)</span></span>
         <div class="row" style="gap:8px;flex-wrap:nowrap">

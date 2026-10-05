@@ -202,6 +202,8 @@ function collectJob() {
     email_col: parseInt($("email-col").value, 10),
     attach_col: parseInt($("attach-col").value, 10),   // -1 = ek gönderme
     subject: $("subject").value,
+    cc: $("cc").value.trim(),
+    bcc: $("bcc").value.trim(),
     body: MailEditor.getValue(),
     is_html: $("is-html").checked,
     method: currentMethod(),
@@ -226,6 +228,8 @@ function applySettings(d) {
   if (!d) return null;
   $("xlsx").value = d.xlsx || "";
   $("subject").value = d.subject || "";
+  $("cc").value = d.cc || "";
+  $("bcc").value = d.bcc || "";
   $("is-html").checked = d.is_html !== false;      // varsayılan: HTML
   MailEditor.setHtmlMode($("is-html").checked);
   MailEditor.setValue(d.body || "");
@@ -374,11 +378,15 @@ function renderCheckReport(rep) {
   dump("Ek dosyası bulunamadı", rep.missing_attach, "error");
   dump("Tekrarlı ek", rep.duplicate_attach, "info");
   dump("Yer tutucu değeri boş", bosAlan, "info");
+  // Geçersiz CC/BCC maili durdurmaz (o adres atlanır) ama kopya kimseye gitmez:
+  // kullanıcının düzeltmesi gereken bir sorundur.
+  const kotuCc = rep.bad_cc || [];
+  dump("Geçersiz CC/BCC adresi (atlanacak, mail yine gider)", kotuCc, "error");
   if (rep.csv) logLine("info", "Sorun listesi kaydedildi: " + rep.csv);
 
   setProgress(1, `${rep.total} satır tarandı`);
-  // Yalnızca gönderimi engelleyenler "sorun" sayılır.
-  const problems = rep.bad_email.length + rep.missing_attach.length + bilinmeyen.length;
+  // Yalnızca gönderimi engelleyenler ve kaybolacak kopyalar "sorun" sayılır.
+  const problems = rep.bad_email.length + rep.missing_attach.length + bilinmeyen.length + kotuCc.length;
   const notlar = bosAlan.length + rep.empty_attach.length;
   if (problems === 0 && !notlar) toast(`✔ Her şey yolunda — ${rep.total} satırın tamamı geçerli.`, "success", 5000);
   else if (problems === 0) toast(`✔ Gönderime engel yok — ${notlar} satır için not var, log alanına bakın.`, "info", 5000);
@@ -493,6 +501,8 @@ function wire() {
 
   $("is-html").onchange = () => MailEditor.setHtmlMode($("is-html").checked);
   $("btn-subject-field").onclick = (e) => MailEditor.openFields(e.currentTarget, "subject");
+  $("btn-cc-field").onclick = (e) => MailEditor.openFields(e.currentTarget, "cc");
+  $("btn-bcc-field").onclick = (e) => MailEditor.openFields(e.currentTarget, "bcc");
 
   $("btn-clear-log").onclick = clearLog;
 
@@ -519,9 +529,16 @@ function wire() {
     const ekBilgi = job.attach_col >= 0
       ? `${colLetter(job.attach_col)} sütunundaki dosya`
       : "yok (eksiz gönderilecek)";
+    // CC/BCC de onayda yazılır: 1300 mailin kopyası birine gidecekse bilinsin.
+    let kopyaBilgi = "";
+    if (job.cc || job.bcc) {
+      kopyaBilgi = job.test
+        ? "\nCC/BCC: TEST modunda gönderilmez"
+        : (job.cc ? `\nCC: ${job.cc}` : "") + (job.bcc ? `\nBCC: ${job.bcc}` : "");
+    }
     const ok = await confirmModal(
       "Gönderimi başlat",
-      `${mode}\nYöntem: ${job.method}\nGönderen: ${job.sender}\nKonu: ${job.subject}\nEk: ${ekBilgi}\nGönderilecek: ${n}`,
+      `${mode}\nYöntem: ${job.method}\nGönderen: ${job.sender}${kopyaBilgi}\nKonu: ${job.subject}\nEk: ${ekBilgi}\nGönderilecek: ${n}`,
       "Başlat");
     if (!ok) return;
     await saveSettings();

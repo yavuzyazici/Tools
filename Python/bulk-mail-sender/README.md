@@ -16,6 +16,8 @@ yapabilirsiniz.
   değeri girer: *"Sayın Ahmet Yılmaz, 1.234,50 TL tutarındaki FTR-2026-001 numaralı faturanız…"*
 - 📎 **Ek isteğe bağlı** — ek sütunu seçmeden de gönderebilirsiniz (duyuru/bilgilendirme
   maili); seçtiğinizde bazı satırların ek hücresi boş kalabilir, onlar eksiz gider.
+- 👥 **CC / BCC** — her maile sabit bir kopya adresi (`arsiv@sirket.com`) ya da Excel'den
+  satıra özel adres (`{Yetkili E-posta}`) ekleyin; ikisi bir arada da olur.
 - 🖋️ **Profesyonel HTML editörü** — tasarım (WYSIWYG) + renklendirilmiş kaynak kodu +
   bölünmüş görünüm, tablo/resim/bağlantı ekleme, Word temizleme, e-posta uyumluluk denetimi.
 - 👁️ **Gerçek veriyle önizleme** — göndermeden önce her satırın mailini olduğu gibi görün.
@@ -114,6 +116,32 @@ Excel'de olmayan, program tarafından üretilen alanlar:
   (`{Ad|Sayın Müşterimiz}` yazdıysanız uyarı verilmez.)
 
 Tam liste, diğer sorunlarla birlikte `kontrol_sorunlari.csv` dosyasına yazılır.
+
+## CC / BCC (kopya alıcılar)
+
+**Mail içeriği** kartındaki **CC** ve **BCC** alanları isteğe bağlıdır.
+
+```
+CC  : muhasebe@sirket.com; {Yetkili E-posta}
+BCC : arsiv@sirket.com
+```
+
+- Birden çok adres `;` ile (ya da `,` ile) ayrılır. Excel hücresinde alt alta
+  yazılmış adresler de olur. `Ad Soyad <adres@alan.com>` yazımında yalnızca adres alınır.
+- `{Sütun}` yazarak her satırın kendi adresini kullanın (**Alan** düğmesi listeler).
+  Hücre **boşsa** o satırda kopya gitmez; bu bir hata değildir.
+- **BCC** mail başlığına yazılmaz: alıcı ve CC'dekiler o adresi görmez.
+- Alıcının kendisi CC'de de geçiyorsa ya da bir adres iki kez yazılmışsa tekrar
+  **atlanır**; aynı kişiye aynı mail iki kez gitmez.
+- **Geçersiz adres** (`ahmet@firma` gibi) maile eklenmez, mail yine gider. Log'da ve
+  gönderim kaydında belirtilir. Sabit yazılmış geçersiz bir adres ise gönderimi
+  **başlatmaz**. **Kontrol Et**, satıra özel adresleri tek tek tarar.
+- **TEST modunda CC/BCC kullanılmaz.** Test adresi doluyken mail yalnızca oraya gider;
+  CC'deki gerçek kişilere test maili ulaşmaz. **Önizle** kopyaların kime gideceğini gösterir.
+- SMTP sunucusu bir kopya adresini reddederse mail asıl alıcıya yine gider ve uyarı
+  yazılır. Asıl alıcı reddedilirse satır **HATA** sayılır.
+- Gönderim kaydında (`gonderim_sonuclari.csv`) `detail` sütunu her satırın kopya
+  alıcılarını yazar: `CC: a@x.com; BCC: arsiv@sirket.com`.
 
 ## HTML editörü
 
@@ -239,7 +267,8 @@ masaüstüne kısayol oluşturabilirsiniz.
      "Gönderen adres" alanına o hesabın adresini yazın (Outlook'ta ekli olmalı).
    - **SMTP**: Sunucu, port, güvenlik, kullanıcı ve şifreyi girin.
      Yaygın ayarlar: `587 + starttls` veya `465 + ssl`.
-4. **Konu** ve **İçerik**'i yazın.
+4. **Konu** ve **İçerik**'i yazın. Kopya göndermek isterseniz **CC/BCC** alanlarını
+   doldurun (bkz. [CC / BCC](#cc--bcc-kopya-alıcılar)).
    - Kişiye özel yazmak için **Alan Ekle**'yi kullanın ya da doğrudan `{Sütun Adı}`
      yazın (bkz. [Kişiselleştirme](#kişiselleştirme--sütun-adı)).
    - Düz metin göndermek isterseniz **"İçerik HTML"** kutusunun işaretini kaldırın.

@@ -262,7 +262,7 @@ def _write_problem_csv(job, rep) -> str:
     """
     problems = (rep.get("bad_email", []) + rep.get("empty_attach", [])
                 + rep.get("missing_attach", []) + rep.get("duplicate_attach", [])
-                + rep.get("empty_field", []))
+                + rep.get("empty_field", []) + rep.get("bad_cc", []))
     if not problems:
         return ""
     out = os.path.join(os.path.dirname(job.xlsx_path) or ".", "kontrol_sorunlari.csv")
@@ -530,6 +530,8 @@ class Api:
             mapper = merge.RowMapper(headers)
             subject_tpl = merge.Template(sendjob.subject, is_html=False)
             body_tpl = merge.Template(sendjob.body, is_html=sendjob.is_html)
+            copies = core.CopyRecipients(sendjob.cc, sendjob.bcc)
+            tpls = (subject_tpl, body_tpl) + copies.templates
             known = mapper.keys | merge.BUILTIN_KEYS
 
             toplam = len(recipients)
@@ -548,6 +550,7 @@ class Api:
                 values.update({k: f"«{k}»" for k in mapper.keys})
                 satir, eposta, ek = "?", "ornek@musteri.com", ""
 
+            cc, bcc, bad_cc = copies.resolve(eposta, values)
             return {
                 "subject": subject_tpl.render(values),
                 "body": body_tpl.render(values),
@@ -556,14 +559,17 @@ class Api:
                 "total": toplam,
                 "row": satir,
                 "email": eposta,
+                "cc": cc,
+                "bcc": bcc,
+                "bad_cc": bad_cc,
+                # TEST modunda kopyalar gönderilmez; önizleme bunu açıkça söylesin.
+                "test_to": sendjob.test_to,
                 "attachment": ek,
                 "attachment_name": os.path.basename(ek) if ek else "",
                 "attachment_ok": bool(ek) and os.path.isfile(ek),
-                "unknown": list(dict.fromkeys(
-                    subject_tpl.unknown_names(known) + body_tpl.unknown_names(known)
-                )),
+                "unknown": list(dict.fromkeys(n for t in tpls for n in t.unknown_names(known))),
                 "used": list(dict.fromkeys(
-                    a for a in (subject_tpl.used_names() + body_tpl.used_names())
+                    a for t in tpls for a in t.used_names()
                     if merge.normalize_name(a) in known
                 )),
             }
@@ -633,6 +639,8 @@ class Api:
             subject=job.get("subject", ""),
             body=job.get("body", ""),
             is_html=bool(job.get("is_html")),
+            cc=(job.get("cc") or "").strip(),
+            bcc=(job.get("bcc") or "").strip(),
             method=job.get("method", "outlook"),
             sender=(job.get("sender") or "").strip(),
             smtp_host=(job.get("smtp_host") or "").strip(),
